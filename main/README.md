@@ -12,6 +12,7 @@
 BUNKER 2.0 is a locally-stored, offline password and notes manager built with privacy-first principles. Using **AES-256 encryption**, your data never leaves your device and is protected by military-grade cryptographic standards.
 
 https://youtu.be/DxMICmnFs_Y - DEMO VIDEO
+https://zeromarks.gumroad.com/l/vmnbz - GUMROAD
 
 **Key Features:**
 - **AES-256 Encryption** - Industry standard military-grade security
