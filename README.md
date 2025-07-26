@@ -1,13 +1,17 @@
+
 # BUNKER 2.0: Your Digital Fortress (Terminal Edition)
 *Military-Grade Local Security Vault*
 
 ######## FULL SCREEN IS RECOMMENDED ########
+<img width="1005" height="632" alt="och9kko23oufm3ny21w8hakint5x" src="https://github.com/user-attachments/assets/a64ccb84-0806-4e09-9270-c1bfc997a17b" />
 
 ---
 
 ## 🛡️ About BUNKER 2.0
 
 BUNKER 2.0 is a locally-stored, offline password and notes manager built with privacy-first principles. Using **AES-256 encryption**, your data never leaves your device and is protected by military-grade cryptographic standards.
+
+https://youtu.be/DxMICmnFs_Y - DEMO VIDEO
 
 **Key Features:**
 - **AES-256 Encryption** - Industry standard military-grade security
@@ -18,6 +22,8 @@ BUNKER 2.0 is a locally-stored, offline password and notes manager built with pr
 - **Encrypted Notes** - Secure storage for sensitive information
 - **IP Display Toggle** - Optional network monitoring
 - **Brute-Force Protection** - Failed attempt tracking with vault lockdown
+
+<img width="1005" height="648" alt="jl4s88eza1rti5bd10d4504bqk7n" src="https://github.com/user-attachments/assets/37696825-96c5-47f4-9b94-0b7baf19578f" />
 
 ---
 
