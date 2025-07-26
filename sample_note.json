@@ -1,0 +1,51 @@
+{
+  "watermark": [
+    "##################################################",
+    "#             Property of ZEROMARKSLLC           #",
+    "#               EXPORTED with BUNKER             #",
+    "##################################################"
+  ],
+  "notes": {
+      "1": {
+          "title": "Simple Note",
+          "content": "This is the minimum required content",
+          "favorite": false,
+          "private": false
+      },
+      "2": {
+          "title": "List of Cars",
+          "content": "Nissan GT-R Nismo 2024, Ferrari F40, Bugatti Chiron Super Sport 300+, Lamborghini Sián FKP 37, McLaren Speedtail, Pagani Huayra Roadster BC, Koenigsegg Jesko Absolut, Aston Martin Valkyrie, Pininfarina Battista, Rimac Nevera.",
+          "favorite": true,
+          "tags": ["list", "cars", "automobiles"],
+          "private": false
+      },
+      "3": {
+          "title": "List of Hacker Tools",
+          "content": "Metasploit Framework, Wireshark, Nmap, John the Ripper, Burp Suite, Aircrack-ng, Hydra, Maltego, SQLmap, Hashcat.",
+          "favorite": true,
+          "tags": ["list", "tools", "hacking"],
+          "private": true
+      },
+      "4": {
+          "title": "Monthly Profit Reports",
+          "content": "January - $5000, February - $6000, March - $7000, April - $8000",
+          "favorite": false,
+          "tags": ["monthly", "profit", "reports"],
+          "private": true
+      },
+      "5": {
+          "title": "List of Cities",
+          "content": "New York, Tokyo, London, Paris, Dubai, Los Angeles, Singapore, Hong Kong, Sydney, Shanghai.",
+          "favorite": false,
+          "tags": ["list", "cities", "travel"],
+          "private": false
+      },
+      "6": {
+          "title": "Meeting Notes",
+          "content": "Discussion points for project X",
+          "favorite": false,
+          "tags": ["N/A"],
+          "private": false
+      }
+  }
+}

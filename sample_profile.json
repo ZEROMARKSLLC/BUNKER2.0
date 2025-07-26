@@ -1,0 +1,49 @@
+{
+    "watermark": [
+        "##################################################",
+        "#             Property of ZEROMARKSLLC           #",
+        "#               EXPORTED with BUNKER             #",
+        "##################################################"
+    ],
+    "profiles": {
+        "uuid1": {
+            "domain": "example.com",
+            "email": "sampleUsername@example.com",
+            "username": "sampleUsername@gvras",
+            "password": "samplePassword",
+            "favorite": false
+        },
+        "uuid2": {
+            "domain": "testsite.org",
+            "email": "testUser@testsite.org",
+            "username": "testUser@asfe",
+            "password": "testPass",
+            "favorite": true
+        },
+        "uuid3": {
+            "domain": "mywebsite.net",
+            "email": "myUser@mywebsite.net",
+            "username": "myUser@tead",
+            "password": "myPass",
+            "favorite": false
+        },
+        "uuid4": {
+            "domain": "demo.com",
+            "email": "demoUser@demo.com",
+            "username": "demoUser@gmal",
+            "password": "demoPass",
+            "favorite": true
+        },
+        "uuid5": {
+            "domain": "example.com",
+            "password": "mypassword",
+            "favorite": false  
+        },
+        "uuid6": {
+            "domain": "another.com",
+            "password": "anotherpass",
+            "username": "myuser",
+            "favorite": false  
+        }
+    }
+}
