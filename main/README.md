@@ -90,7 +90,7 @@ python3 BUNKER.py
 
 After launching, you'll reach the BUNKER ACCESS page.
 
-**Demo Password:** `ZMBROOT`
+**Demo Password:** `rootroot`
 
 ---
 
