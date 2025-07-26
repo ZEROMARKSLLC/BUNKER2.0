@@ -1,6 +1,5 @@
 
-# BUNKER 2.0: Your Digital Fortress (Terminal Edition)
-*Military-Grade Local Security Vault*
+# BUNKER 2.0: Your Digital Fortress (Terminal Edition) Price: FREE! $0 OR PAY WHAT YOU WANT! 
 
 ######## FULL SCREEN IS RECOMMENDED ########
 <img width="1005" height="632" alt="och9kko23oufm3ny21w8hakint5x" src="https://github.com/user-attachments/assets/a64ccb84-0806-4e09-9270-c1bfc997a17b" />
@@ -8,6 +7,7 @@
 ---
 
 ## 🛡️ About BUNKER 2.0
+*Military-Grade Local Security Vault*
 
 BUNKER 2.0 is a locally-stored, offline password and notes manager built with privacy-first principles. Using **AES-256 encryption**, your data never leaves your device and is protected by military-grade cryptographic standards.
 
