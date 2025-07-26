@@ -71,10 +71,20 @@ cd ~/Desktop/BUNKER2.0
 
 **Installation Command:**
 ```bash
-pip install inputimeout keyboard cryptography pyperclip psutil requests
+pip install inputimeout keyboard cryptography pyperclip psutil requests argon2-cffi
+```
+**Important:** Make sure you're in the `BUNKER2.0` directory (showing `BUNKER2.0 %`) and not the home directory (`~ %`) for successful installation.
+
+---
+
+## 🔧 Troubleshooting
+
+**Import Errors:**
+If you encounter import errors on first run, install missing packages:
+```bash
+pip install [missing_package_name]
 ```
 
-**Important:** Make sure you're in the `BUNKER2.0` directory (showing `BUNKER2.0 %`) and not the home directory (`~ %`) for successful installation.
 
 ### Step 3: Launch BUNKER 2.0
 
@@ -131,15 +141,7 @@ This application is built for **educational purposes**. Use BUNKER 2.0 at your o
 
 **Security Note:** While BUNKER 2.0 uses industry-standard AES-256 encryption, always maintain proper backup practices for critical data.
 
----
 
-## 🔧 Troubleshooting
-
-**Import Errors:**
-If you encounter import errors on first run, install missing packages:
-```bash
-pip install [missing_package_name]
-```
 
 **Other Issues:**
 If you experience different errors, please reach out through our social media channels for support.
