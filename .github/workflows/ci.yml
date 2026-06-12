@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Deterministic crypto in tests; also documents that CI must never hold
+  # a real pepper, password, or vault material.
+  BUNKER_PEPPER: ""
+
+jobs:
+  smoke:
+    name: py_compile (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      # No dependencies needed: catches syntax regressions (e.g. the PEP 701
+      # f-string that broke Python <= 3.11) in seconds, on every version.
+      - name: Compile all sources
+        run: python -m py_compile BUNKER.py main/INITIALIZE.py main/SHARED_RESOURCES.py test_p0_fixes.py
+
+  lint:
+    name: lint (error-class findings only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install ruff
+      # Tolerant of the existing style on purpose: only error-class findings
+      # (syntax errors, undefined names) fail CI. Style rules stay advisory
+      # until the core/ extraction.
+      - name: Fatal checks
+        run: ruff check --select E9,F63,F7,F82 --target-version py310 .
+      - name: Advisory report (never fails)
+        run: ruff check --exit-zero --statistics --target-version py310 .
+
+  tests:
+    name: pytest (${{ matrix.os }}, py${{ matrix.python }})
+    needs: smoke
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.10', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+      - name: Run pytest suite
+        run: pytest -q
+      - name: Run legacy P0 verification script
+        run: python test_p0_fixes.py
+      - name: Guard - tests must not have touched checked-in vault files
+        shell: bash
+        run: |
+          git diff --exit-code -- Bunker.mmf bunker.cfg bunker.salt config.cfg
+          test ! -f bunker.devkey
+          if ls *.bak >/dev/null 2>&1; then
+            echo "::error::test run leaked .bak files into the checkout"; exit 1
+          fi

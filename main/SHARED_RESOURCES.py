@@ -70,7 +70,7 @@ subwm = f"                                                                      
 
 # ip curl
 from typing import Optional
-import threading , socket, subprocess, time, json
+import threading , socket, subprocess, time, json, glob
 
 # Function to animate a loading bar with color
 def loading_bar(duration, length=30):
@@ -106,33 +106,37 @@ def displaySection(title):
 cached_ip = None
 cache_lock = threading.Lock()
 ip_fetch_thread = None
+ip_fetch_stop = threading.Event()
 
 def start_ip_fetch_thread():
     global ip_fetch_thread
     if not ip_fetch_thread or not ip_fetch_thread.is_alive():
+        ip_fetch_stop.clear()
         ip_fetch_thread = threading.Thread(target=fetch_ip_thread_func, daemon=True)
         ip_fetch_thread.start()
 
 
 def stop_ip_fetch_thread():
     global ip_fetch_thread
-    if ip_fetch_thread and ip_fetch_thread.is_alive():
-        ip_fetch_thread = None
+    ip_fetch_stop.set()  # the loop observes this and exits
+    ip_fetch_thread = None
 
 
 
 def fetch_ip_thread_func():
     global cached_ip
-    while True:
+    while not ip_fetch_stop.is_set():
         current_connection = check_internet_connection()
+        ip = get_public_ipv4() if current_connection else None
         with cache_lock:
             if current_connection:
-                ip = get_public_ipv4()
                 if ip:  # Update cache only if new IP is successfully fetched
                     cached_ip = ip
             else:
                 cached_ip = ""  # Set cached_ip to empty string to indicate offline
-        time.sleep(30)  # Check every minute for internet connectivity changes
+        # Re-check every 30s, but wake immediately when stopped
+        if ip_fetch_stop.wait(30):
+            break
 
 def get_public_ipv4() -> Optional[str]:
     try:
@@ -460,16 +464,30 @@ def get_config_paths():
                 
     return paths
 
-def self_destruct():
-    """Securely delete all sensitive files with multiple overwrite passes and trash bin bypass"""
+def self_destruct(reason="unspecified", force=False):
+    """Securely delete all sensitive files with multiple overwrite passes and trash bin bypass
+
+    Destruction only runs when force=True (the explicit max-failed-logins
+    lockout path). Every other caller gets a safe exit that preserves the
+    vault, salt, and config files."""
+    if not force:
+        print(f"{RED}** Self-destruct suppressed ({reason}). "
+              f"Exiting without wiping the vault — your data is intact. **{RESET}")
+        sys.exit(1)
     # Updated list of sensitive files
     sensitive_files = [
         "Bunker.mmf", 
         "bunker.cfg", 
         "bunker.salt",     
-        "config.cfg",   
-        ".vault_config",   
-        "*.bak.*"         
+        "config.cfg",
+        ".vault_config",
+        "bunker.devkey",
+        # Only OUR backups — never glob a bare *.bak, which would shred
+        # unrelated files in whatever directory BUNKER was launched from
+        "Bunker.mmf.bak*",
+        "bunker.cfg.bak*",
+        "bunker.salt.bak*",
+        "config.cfg.bak*",
 
     ]
     
@@ -480,14 +498,21 @@ def self_destruct():
         # Multiple overwrite passes for each file
         for file_name in sensitive_files:
             # Check current directory and potential locations
-            paths_to_check = [
+            candidates = [
                 file_name,  # Current directory
                 os.path.join("main", file_name),  # main directory
                 os.path.join("config", file_name) if os.path.exists("config") else None
             ]
-            
-            # Filter out None values
-            paths_to_check = [p for p in paths_to_check if p]
+
+            # Expand wildcard patterns (e.g. *.bak) into real paths
+            paths_to_check = []
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                if any(ch in candidate for ch in "*?["):
+                    paths_to_check.extend(glob.glob(candidate))
+                else:
+                    paths_to_check.append(candidate)
             
             for path in paths_to_check:
                 if os.path.exists(path):

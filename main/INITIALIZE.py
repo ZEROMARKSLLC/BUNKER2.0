@@ -193,16 +193,19 @@ class SecureVaultEnhanced:
             raise ValueError(f"Failed to load {filename}: {str(e)}") 
     
     def verify_password_enhanced(self, password, salt, verifier):
-        """Verify password using config data"""
-        try:
-            key = self.derive_key_hybrid(password, salt, password)
-            decrypted = self.decrypt_data(verifier, key)
-            
-            if decrypted == b"BUNKER_VERIFIED":
-                return key
-            return False
-        except Exception:
-            return False
+        """Verify password using config data.
+
+        Tries the current scheme (password + PEPPER) first, then the
+        legacy scheme (password + password) used by vaults created before
+        the pepper fix, so existing vaults keep opening."""
+        for pepper in (PEPPER, password):
+            try:
+                key = self.derive_key_hybrid(password, salt, pepper)
+                if self.decrypt_data(verifier, key) == b"BUNKER_VERIFIED":
+                    return key
+            except Exception:
+                continue
+        return False
         
     def secure_save(self, filename: str, data: bytes, key: bytes):
         """Securely save encrypted data with consistent format"""
@@ -226,12 +229,20 @@ class SecureVaultEnhanced:
             self.secure_wipe()
             raise ValueError(f"Failed to save {filename}: {str(e)}")
         
-    def secure_delete_on_failure(self):
-        """Securely delete all sensitive files"""
+    def secure_delete_on_failure(self, force=False):
+        """Securely delete all sensitive files.
+
+        Gated like self_destruct(): without force=True this is a loud
+        no-op, so no error handler can ever wipe the vault by accident."""
+        if not force:
+            print(f"{RED}** Secure delete suppressed. No files were "
+                  f"deleted — your data is intact. **{RESET}")
+            return
         sensitive_files = [
-            self.config_file,  
+            self.config_file,
             self.database_file,
             self.salt_file,
+            "bunker.devkey",
         ]
         
         try:
@@ -388,10 +399,7 @@ class SecureVaultEnhanced:
             # Encrypt the config dict as JSON using the provided key
             json_bytes = json.dumps(config_data).encode()
             encrypted = self.encrypt_data(json_bytes, hashed_pass)
-            with open(self.config_file, "wb") as f:
-                f.write(encrypted)
-            if os.name == 'posix':
-                os.chmod(self.config_file, 0o600)
+            _atomic_write(self.config_file, encrypted)
         except Exception as e:
             raise ValueError(f"Failed to save config: {str(e)}")
 
@@ -435,68 +443,6 @@ SALT_SIZE = 32
 NONCE_SIZE = 12
 TAG_SIZE = 16
 
-def overwrite_db(new_contents):
-    """Securely overwrite database with enhanced error handling and security
-    
-    Args:
-        new_contents: The new contents to write to the database file
-    """
-    try:
-        # Create a backup first
-        try:
-            if os.path.exists("Bunker.mmf"):
-                backup_name = f"Bunker.mmf.bak.{int(time.time())}"
-                with open("Bunker.mmf", "rb") as src, open(backup_name, "wb") as dst:
-                    dst.write(src.read())
-                    
-                # Set proper permissions on Unix-like systems
-                if os.name == 'posix':
-                    os.chmod(backup_name, 0o600)
-                print(f"{GOLD}Created backup: {backup_name}{RESET}")
-        except Exception as e:
-            print(f"{RED}Warning: Failed to create backup: {str(e)}{RESET}")
-        
-        # Ensure new_contents is in the correct format (bytes)
-        if isinstance(new_contents, str):
-            print(f"{GOLD}Converting string to bytes for database write...{RESET}")
-            new_contents = new_contents.encode()
-            
-        # Write new contents as binary
-        with open("Bunker.mmf", "wb") as file:
-            file.write(new_contents)
-            
-        # Set proper permissions on Unix-like systems
-        if os.name == 'posix':
-            os.chmod("Bunker.mmf", 0o600)
-            
-        # Verify the write was successful
-        if os.path.exists("Bunker.mmf"):
-            with open("Bunker.mmf", "rb") as file:
-                content = file.read()
-                if content != new_contents:
-                    raise ValueError("File verification failed")
-                    
-        print(f"{GREEN}Database saved successfully{RESET}")
-        return True
-        
-    except Exception as e:
-        print(f"{RED}** ALERT: Failed to overwrite database: {str(e)} **{RESET}")
-        
-        # Try to restore from backup if write failed
-        try:
-            backup_files = [f for f in os.listdir() if f.startswith("Bunker.mmf.bak.")]
-            if backup_files:
-                latest_backup = max(backup_files, key=lambda x: int(x.split(".")[-1]))
-                print(f"{GOLD}Attempting to restore from backup: {latest_backup}{RESET}")
-                
-                with open(latest_backup, "rb") as src, open("Bunker.mmf", "wb") as dst:
-                    dst.write(src.read())
-                    
-                print(f"{GREEN}Restored from backup{RESET}")
-        except Exception as restore_error:
-            print(f"{RED}** ALERT: Failed to restore from backup: {str(restore_error)} **{RESET}")
-            
-        return False
 
 def generate_export_encryption(passphrase):
     """Generate encryption key and verifier for exports with enhanced security"""
@@ -596,8 +542,23 @@ def load_encrypted_file(filename, hashed_pass):
     except Exception as e:
         raise ValueError(f"Failed to load {filename}: {str(e)}")
 
-def timeoutInput(caption, timeout=60, hashed_pass=None):
-    """Handle timeout input with enhanced security"""
+def timeoutInput(caption, timeout=None, hashed_pass=None):
+    """Handle timeout input with enhanced security.
+
+    timeout=None uses the user's configured auto-logout value (so every
+    prompt honors the setting, not just the login screen); timeout <= 0
+    means the timer is disabled and the prompt waits indefinitely."""
+    if timeout is None:
+        try:
+            timeout = load_ui_config().get("current_timeout", 60)
+        except BaseException:
+            # A mid-session config problem must not kill the app at some
+            # arbitrary prompt (losing in-flight input); fall back to the
+            # default — the login path's own config read still enforces
+            # the lock on next launch.
+            timeout = 60
+    if timeout is None or timeout <= 0:
+        return input(caption)
     try:
         user_input = inputimeout(prompt=caption, timeout=timeout)
     except TimeoutOccurred:
@@ -606,7 +567,46 @@ def timeoutInput(caption, timeout=60, hashed_pass=None):
     return user_input
 
 
-PEPPER = os.environ.get("BUNKER_PEPPER", "default_pepper_value")
+# Optional secret pepper for key derivation. Empty by default (a pepper only
+# helps if it is a real secret independent of the password). Vaults created
+# before this fix derived keys with the password concatenated to itself; the
+# LEGACY scheme below keeps those vaults opening.
+PEPPER = os.environ.get("BUNKER_PEPPER", "")
+
+def derive_candidate_keys(password, salt):
+    """Yield the current-scheme key, then the legacy (password-as-pepper)
+    key used by vaults created before the pepper fix.
+
+    Lazy on purpose: each derivation costs a full Argon2id+PBKDF2 run
+    (~0.3s desktop, seconds on a phone), so the legacy key is only derived
+    when the current-scheme key fails."""
+    current = vault.derive_key_hybrid(password, salt, PEPPER)
+    yield current
+    legacy = vault.derive_key_hybrid(password, salt, password)
+    if legacy != current:
+        yield legacy
+
+# Machine-local key for the pre-auth UI config (attempt counter, timeout).
+# Not secret-grade — an attacker with filesystem access already has the
+# encrypted vault — but unlike the old hardcoded key it cannot be forged
+# by anyone who merely read this source code.
+DEVKEY_FILE = "bunker.devkey"
+LEGACY_UI_KEY = b"0" * 32
+
+def _ui_config_key():
+    try:
+        with open(DEVKEY_FILE, "rb") as f:
+            secret = f.read()
+    except FileNotFoundError:
+        # First run only. A transient read error (permissions, I/O) must NOT
+        # silently mint a new key — that would orphan the existing config.
+        secret = os.urandom(32)
+        _atomic_write(DEVKEY_FILE, secret)
+    if len(secret) != 32:
+        raise ValueError("bunker.devkey is damaged (wrong length); "
+                         "restore it from backup or delete it AND config.cfg "
+                         "to regenerate defaults")
+    return base64.urlsafe_b64encode(secret)
 
 DEFAULT_UI_CONFIG = {
     "attempts": 0,
@@ -615,55 +615,50 @@ DEFAULT_UI_CONFIG = {
     "current_timeout": 60,
 }
 
-def atomic_write_bytes(path, data):
-    """Write bytes to path atomically: temp file in the same directory,
-    flush+fsync, then os.replace. A crash mid-write can never leave a
-    truncated file at the destination."""
-    directory = os.path.dirname(os.path.abspath(path)) or "."
-    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=os.path.basename(path) + ".", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-            f.flush()
-            os.fsync(f.fileno())
-        if os.name == 'posix':
-            os.chmod(tmp_path, 0o600)
-        os.replace(tmp_path, path)
-    except Exception:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise
-
 def load_ui_config(hashed_pass=None):
+    # The legacy static-key migration is only honored on the very first run
+    # (before this machine has a device key). Afterwards a static-key
+    # config.cfg is treated as the forgery it would be — otherwise anyone who
+    # read the source could reset the lockout counter forever.
+    first_run = not os.path.exists(DEVKEY_FILE)
+    key = hashed_pass or _ui_config_key()
     try:
-        key = hashed_pass or b"0"*32  # Replace with a real key if possible
         with open("config.cfg", "rb") as f:
             encrypted = f.read()
+    except FileNotFoundError:
+        # First run / tidied-up file: rebuild defaults, never destroy the vault
+        config = dict(DEFAULT_UI_CONFIG)
+        save_ui_config(config, hashed_pass)
+        return config
+    try:
         decrypted = vault.decrypt_data(encrypted, key)
         return json.loads(decrypted.decode("utf-8"))
-    except Exception as e:
-        # The UI config only holds preferences (timeout, attempt counter,
-        # IP display). If it is missing or corrupted, restore defaults and
-        # keep the vault intact — never destroy key material over this file.
-        print(f"{RED}** ALERT: UI config file missing or corrupted ({str(e)}). Restoring defaults... **{RESET}")
-        default_config = dict(DEFAULT_UI_CONFIG)
+    except Exception:
+        pass
+    if first_run:
+        # One-time migration: configs written before the device-key fix were
+        # encrypted under a static key; re-encrypt under this machine's key
         try:
-            save_ui_config(default_config, hashed_pass)
+            decrypted = vault.decrypt_data(encrypted, LEGACY_UI_KEY)
+            config = json.loads(decrypted.decode("utf-8"))
+            save_ui_config(config, hashed_pass)
+            return config
         except Exception:
             pass
-        return default_config
-
+    # Corrupt (or forged) settings file: lock the session but PRESERVE the vault
+    print(f"{RED}** ALERT: The settings file (config.cfg) is unreadable. **{RESET}")
+    print(f"{GOLD}Vault locked — your data was NOT deleted. Restore config.cfg "
+          f"from a backup (config.cfg.bak) or delete it to regenerate defaults.{RESET}")
+    sys.exit(1)
+    
 def save_ui_config(config, hashed_pass=None):
-    # If you have the password/key, use it; otherwise, use a static key for now
-    key = hashed_pass or b"0"*32  # Replace with a real key if possible
+    key = hashed_pass or _ui_config_key()
     data = json.dumps(config).encode("utf-8")
     encrypted = vault.encrypt_data(data, key)
-    atomic_write_bytes("config.cfg", encrypted)
+    _atomic_write("config.cfg", encrypted)
 
 def save_salt(salt, filename="bunker.salt"):
-    atomic_write_bytes(filename, salt)
+    _atomic_write(filename, salt)
 
 def load_salt(filename="bunker.salt"):
     with open(filename, "rb") as f:
@@ -679,16 +674,13 @@ def secure_cleanup_common():
     This handles the sensitive data cleanup without any user messaging.
     """
     try:
-        # Reset global variables
-        global cached_ip
-        cached_ip = None
-        
-        # Clear any active threads
+        # Stop the IP-fetch thread and clear its cache (the state lives in
+        # SHARED_RESOURCES, not this module)
         try:
-            # Stop any running background threads
-            if 'ip_fetch_thread' in globals() and globals()['ip_fetch_thread'] is not None:
-                if hasattr(globals()['ip_fetch_thread'], 'do_run'):
-                    globals()['ip_fetch_thread'].do_run = False
+            import main.SHARED_RESOURCES as _sr
+            _sr.stop_ip_fetch_thread()
+            with _sr.cache_lock:
+                _sr.cached_ip = None
         except Exception:
             # Silently handle thread cleanup errors
             pass
@@ -921,25 +913,84 @@ def fileSetup(hashed_pass):
         return salt, verifier, database
     except Exception as e:
         print(f"{RED}** ALERT: Error loading security files: {str(e)} **{RESET}")
-        self_destruct()
+        print(f"{GOLD}Your vault was NOT deleted. Restore the damaged file from "
+              f"its .bak backup and try again.{RESET}")
+        raise
+
+def _atomic_write(path, data, keep_backup=True):
+    """Crash-safe file write: temp file in the same directory -> flush+fsync
+    -> os.replace onto the target, keeping one rolling <path>.bak of the
+    previous good version. The target file never disappears at any instant,
+    so a kill or power loss mid-save can no longer corrupt the vault."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    base = os.path.basename(path)
+
+    fd, tmp = tempfile.mkstemp(prefix=base + ".", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        if os.name == "posix":
+            os.chmod(tmp, 0o600)
+
+        # Roll the current good version to .bak (copy, so `path` never vanishes)
+        if keep_backup and os.path.exists(path):
+            bfd, bak_tmp = tempfile.mkstemp(prefix=base + ".bak.", suffix=".tmp",
+                                            dir=directory)
+            try:
+                with os.fdopen(bfd, "wb") as bf, open(path, "rb") as src:
+                    bf.write(src.read())
+                    bf.flush()
+                    os.fsync(bf.fileno())
+                if os.name == "posix":
+                    os.chmod(bak_tmp, 0o600)
+                os.replace(bak_tmp, path + ".bak")
+                bak_tmp = None
+            finally:
+                if bak_tmp is not None:
+                    try:
+                        os.unlink(bak_tmp)
+                    except OSError:
+                        pass
+
+        os.replace(tmp, path)
+        tmp = None
+        if os.name == "posix":
+            dfd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+def _remove_files(paths):
+    """Best-effort rollback of files created during an aborted setup run.
+    If a write overwrote a pre-existing file, its .bak holds the previous
+    version — restore it instead of deleting outright."""
+    for fname in paths or []:
+        try:
+            if os.path.exists(fname + ".bak"):
+                os.replace(fname + ".bak", fname)
+            else:
+                os.remove(fname)
+        except OSError:
+            pass
 
 def saveDatabase(db, hashed_pass):
     """Save database with enhanced security"""
     try:
         db_bytes = json.dumps(db).encode('utf-8')
         encrypted_db = vault.encrypt_data(db_bytes, hashed_pass)
-        atomic_write_bytes("Bunker.mmf", encrypted_db)
-        file_size = os.path.getsize("Bunker.mmf")
-        if file_size < 100 and len(db) > 0:
-            raise ValueError(f"Database file too small ({file_size} bytes)")
-        # Only update config if it loads successfully
-        try:
-            vault.manage_config(
-                hashed_pass,
-                last_modified=str(datetime.datetime.now().timestamp())
-            )
-        except Exception as e:
-            print(f"{GOLD}Warning: Could not update config last_modified: {str(e)}{RESET}")
+        # Prove the ciphertext round-trips BEFORE it replaces the vault on disk
+        if vault.decrypt_data(encrypted_db, hashed_pass) != db_bytes:
+            raise ValueError("Pre-save verification failed: ciphertext does not round-trip")
+        _atomic_write("Bunker.mmf", encrypted_db)
         return True
     except Exception as e:
         print(f"{RED}** ALERT: Failed to save database: {str(e)} **{RESET}")
@@ -958,10 +1009,13 @@ def loadDatabase(hashed_pass):
     try:
         # Check if database file exists
         if not os.path.exists("Bunker.mmf"):
-            # Do NOT destroy the remaining vault files: with bunker.salt and
-            # bunker.cfg intact, a backup copy of Bunker.mmf is still usable.
-            print(f"{RED}** ALERT: Database file Bunker.mmf is missing. Other vault files were left intact — restore Bunker.mmf from a backup. **{RESET}")
-            raise FileNotFoundError("Bunker.mmf is missing")
+            if os.path.exists("Bunker.mmf.bak"):
+                print(f"{RED}** ALERT: Bunker.mmf is missing, but a backup exists "
+                      f"(Bunker.mmf.bak). Restore it and relaunch. **{RESET}")
+                print(f"{GOLD}No files were deleted.{RESET}")
+                sys.exit(1)
+            print(f"{GOLD}Database file does not exist. Starting with an empty database.{RESET}")
+            return {}
             
         # Read the encrypted database in binary mode
         with open("Bunker.mmf", "rb") as f:
@@ -1036,19 +1090,6 @@ def verify_setup(vault: SecureVaultEnhanced, password: str, salt: bytes, verifie
 
 def vaultSetup():
     """Setup vault with enhanced security while maintaining original process"""
-    # Snapshot which vault files already exist so a failed setup only removes
-    # files *this* run created — never pre-existing vault data.
-    _vault_files = ("bunker.salt", "config.cfg", "bunker.cfg", "Bunker.mmf")
-    _preexisting = {f for f in _vault_files if os.path.exists(f)}
-
-    def _cleanup_new_files():
-        for path in _vault_files:
-            if path not in _preexisting and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-
     try:
         while True:
             setup_choice = input(f"\n{GOLD}Enter (.g) for simplified user guide, or (y/n) if you're ready to setup bunker password: {RESET}").lower()
@@ -1125,18 +1166,21 @@ def vaultSetup():
                 continue
 
         try:
+            # Track files written by THIS setup run so a cancel/failure only
+            # removes our own writes and never wipes a pre-existing vault
+            created_files = []
             # Generate salt and save it separately
             salt = os.urandom(SALT_SIZE)
             save_salt(salt)
+            created_files.append("bunker.salt")
 
             # Derive key using password + salt (+ optional pepper)
-            pepper = os.environ.get("BUNKER_PEPPER", "")
-            derived_key = vault.derive_key_hybrid(password_provided, salt, password_provided)
+            derived_key = vault.derive_key_hybrid(password_provided, salt, PEPPER)
             # Setup timeout with cancel option
             timeout_value = setup_timeout()
             if timeout_value is None:
                 print(f"{GREEN}Operation cancelled...{RESET}")
-                _cleanup_new_files()
+                _remove_files(created_files)
                 return False
 
             # Create initial config structure
@@ -1159,15 +1203,18 @@ def vaultSetup():
                 "current_timeout": timeout_value
             }
             save_ui_config(ui_config)
+            created_files.append("config.cfg")
 
             # Encrypt and save config
             encrypted_config = vault.encrypt_data(json.dumps(config).encode(), derived_key)
-            atomic_write_bytes("bunker.cfg", encrypted_config)
+            _atomic_write("bunker.cfg", encrypted_config)
+            created_files.append("bunker.cfg")
 
             # Initialize empty database separately
             empty_db = {}
             if not saveDatabase(empty_db, derived_key):
                 raise ValueError("Failed to save initial database")
+            created_files.append("Bunker.mmf")
 
             # Display success
             clear_screen()
@@ -1188,11 +1235,11 @@ def vaultSetup():
 
         except Exception as e:
             print(f"{RED}** ALERT: Setup failed: {str(e)} **{RESET}")
-            _cleanup_new_files()
+            _remove_files(created_files)
             return False
     except Exception as e:
         print(f"{RED}** ALERT: Setup failed: {str(e)} **{RESET}")
-        _cleanup_new_files()
+        _remove_files(locals().get("created_files"))
         return False
     finally:
         # Secure cleanup
@@ -1210,6 +1257,9 @@ def main():
         print(nuke_text)
         print(divider)
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()
 
 
 def display_setup_guide():
@@ -1709,8 +1759,8 @@ def changeMasterPassword(hashed_pass, db):
 
             try:
                 # Derive key and check if it matches existing password
-                derived_key = vault.derive_key_hybrid(password_provided, current_salt)
-                if derived_key == hashed_pass:
+                # (check both the current and the legacy derivation scheme)
+                if hashed_pass in derive_candidate_keys(password_provided, current_salt):
                     print(f"{RED}\n ** ALERT: New password cannot be the same as the current password. **{RESET}")
                     while True:
                         retry_choice = timeoutInput(
@@ -1731,7 +1781,7 @@ def changeMasterPassword(hashed_pass, db):
             try:
             # Generate new salt and key
                 new_salt = os.urandom(SALT_SIZE)
-                new_derived_key = vault.derive_key_hybrid(password_provided, new_salt, password_provided)
+                new_derived_key = vault.derive_key_hybrid(password_provided, new_salt, PEPPER)
                 #tempar
                 #new_config = {
                 #    "salt": base64.b64encode(new_salt).decode(),
@@ -1748,43 +1798,33 @@ def changeMasterPassword(hashed_pass, db):
                 config["last_exit"] = str(datetime.datetime.now().timestamp())
                 config["timestamp"] = str(time.time())
 
-                # Stage everything under the new key BEFORE touching any live
-                # file, so a failure here leaves the vault fully usable with
-                # the old password.
-                db_bytes = json.dumps(db).encode("utf-8")
-                encrypted_db = vault.encrypt_data(db_bytes, new_derived_key)
-                if vault.decrypt_data(encrypted_db, new_derived_key) != db_bytes:
-                    raise ValueError("Re-encrypted database failed verification")
+                
+                # Re-encrypt the database under the new key FIRST. If this
+                # fails, nothing else has been published and the old
+                # password still works. (saveDatabase verifies the
+                # ciphertext round-trips before replacing the file, and
+                # every write below keeps a .bak of the previous version.)
+                if not saveDatabase(db, new_derived_key):
+                    raise ValueError("Could not re-encrypt the database — password NOT changed")
+
+                # Publish new salt and config
+                save_salt(new_salt)
+
+                # Encrypt and save config with new key
                 encrypted_config = vault.encrypt_data(json.dumps(config).encode(), new_derived_key)
+                _atomic_write("bunker.cfg", encrypted_config)
 
-                # Keep in-memory rollback copies of the live files, then swap
-                # all three; if any swap fails, restore the old versions so
-                # the old password keeps working.
-                rollback = {}
-                for live in ("Bunker.mmf", "bunker.cfg", "bunker.salt"):
-                    if os.path.exists(live):
-                        with open(live, "rb") as f:
-                            rollback[live] = f.read()
-                try:
-                    atomic_write_bytes("Bunker.mmf", encrypted_db)
-                    atomic_write_bytes("bunker.cfg", encrypted_config)
-                    save_salt(new_salt)
-                except Exception:
-                    for live, old_data in rollback.items():
-                        try:
-                            atomic_write_bytes(live, old_data)
-                        except Exception:
-                            pass
-                    raise
-
-                # Reset the attempt counter but carry over the user's existing
-                # timeout/IP settings (loaded into ui_config at function start).
+                # Reset the attempt counter but PRESERVE the user's settings
+                # (timeout, IP toggle) — they live in the UI config, not in
+                # bunker.cfg, so rebuild from the UI config itself
+                ui_config = load_ui_config()
                 ui_config["attempts"] = 0
                 save_ui_config(ui_config)
 
                 print(f"{GREEN}\n ** SUCCESS: Master password changed successfully! Log in again to access the note manager. **{RESET}")
                 timeoutInput(f"\n{GOLD}Press 'enter' to logout...{RESET}")
                 clear_screen()
+                secure_cleanup_common()  # clears the clipboard on logout
                 sys.exit()
 
             except KeyError as ke:
@@ -1971,75 +2011,3 @@ def changeAutoLogoutTimer(hashed_pass, db):
         if 'hashed_pass' in locals(): del hashed_pass
         vault.secure_wipe()
 
-#debug fuction not connected not needed but good to have to clean db with out restarting setup
-def cleanupDatabase(hashed_pass, db):
-    """
-    Remove invalid entries from the database with enhanced security.
-    Handles both profile entries and note entries.
-    """
-    invalid_entries = []
-    cleaned = False
-    profile_count = 0
-    note_count = 0
-
-    for entry_id, info in db.items():
-        if not isinstance(info, dict):
-            # Not a dictionary, definitely invalid
-            invalid_entries.append(entry_id)
-            cleaned = True
-            continue
-            
-        # Check if this is a profile entry
-        if "password" in info and "domain" in info:
-            # This should be a profile entry
-            if (not isinstance(info.get("domain"), (str, bytes)) or
-                not isinstance(info.get("password"), (str, bytes)) or
-                "content" in info or  # Profiles shouldn't have content
-                "tags" in info):      # Profiles shouldn't have tags
-                invalid_entries.append(entry_id)
-                cleaned = True
-                profile_count += 1
-                
-        # Check if this is a note entry
-        elif "content" in info and "title" in info:
-            # This should be a note entry
-            if (not isinstance(info.get("title"), (str, bytes)) or
-                not isinstance(info.get("content"), (str, bytes)) or
-                "password" in info or  # Notes shouldn't have password
-                "domain" in info):     # Notes shouldn't have domain
-                invalid_entries.append(entry_id)
-                cleaned = True
-                note_count += 1
-                
-        else:
-            # Neither a valid profile nor a valid note
-            invalid_entries.append(entry_id)
-            cleaned = True
-
-    # Remove invalid entries
-    for entry_id in invalid_entries:
-        del db[entry_id]
-
-    # Save cleaned database
-    if cleaned:
-        try:
-            # Use enhanced security for encryption
-            encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-            
-            # Write directly as bytes to ensure consistent format
-            atomic_write_bytes("Bunker.mmf", encrypted_db)
-
-            print(f"\n{GREEN}** Database cleaned up: Removed {len(invalid_entries)} invalid entries **{RESET}")
-            if profile_count > 0:
-                print(f"{GREEN}** {profile_count} invalid profile entries removed **{RESET}")
-            if note_count > 0:
-                print(f"{GREEN}** {note_count} invalid note entries removed **{RESET}")
-        except Exception as e:
-            print(f"{RED} ** ALERT: Failed to update database. Error: {str(e)} **{RESET}")
-            return None
-
-    return db
-
-
-if __name__ == "__main__":
-    main()

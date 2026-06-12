@@ -1,16 +1,15 @@
-# Python build artifacts
 __pycache__/
 *.pyc
 
-# Local vault data — never commit a real vault. The demo files already
-# tracked in git are unaffected by these rules.
-*.mmf
-*.salt
-*.cfg
-.vault_config
+# Machine-local secrets and runtime artifacts — never commit
+bunker.devkey
+*.bak
 *.bak.*
+.vault_config
 
-# Editor / OS noise
+# OS / editor cruft
 .DS_Store
-.qodo
-*.tmp
+.vscode/
+
+# Raw screenshot originals (commit only the optimized copies in docs/img/)
+docs/img/raw/
