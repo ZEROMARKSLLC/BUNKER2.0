@@ -5,7 +5,7 @@ from main.INITIALIZE import  (vaultSetup, display_user_guide,
 timeoutInput, load_salt, loadDatabase, vault,changeMasterPassword, 
 changeAutoLogoutTimer, MIN_PASSWORD_LENGTH,load_ui_config,
 MAX_PASSWORD_LENGTH, RECOMMENDED_PASSWORD_LENGTH, save_ui_config,
-timeout_getpass, overwrite_db, timeoutCleanup, timeoutGlobalCode,
+timeout_getpass, timeoutCleanup, timeoutGlobalCode,
 derive_candidate_keys,
 setup_secure_exit_handlers, secure_cleanup_common, interruptCleanup,
 verify_export_encryption, generate_export_encryption, saveDatabase )
@@ -180,10 +180,16 @@ def main():
                 cSALT = base64.b64decode(config["salt"])
                 cVERIFIER = base64.b64decode(config["verifier"])
                 
-                # Extra verification step
-                if vault.verify_password_enhanced(entered_pass, cSALT, cVERIFIER):
-                    login_successful = True
-                else:
+                # Extra verification step — the verifier must decrypt under
+                # the same key that just opened the config. No KDF re-run:
+                # AES-GCM already authenticated the key, and re-deriving here
+                # would double the login cost for nothing.
+                try:
+                    if vault.decrypt_data(cVERIFIER, derived_key) == b"BUNKER_VERIFIED":
+                        login_successful = True
+                    else:
+                        print(f"{RED} ** ALERT: Password verification failed. Try again. **{RESET}")
+                except Exception:
                     print(f"{RED} ** ALERT: Password verification failed. Try again. **{RESET}")
                     
             except Exception:
@@ -1463,7 +1469,7 @@ def displayFavorites(hashed_pass, db):
                                     )
                                     break
                                 elif copy_choice == "c":
-                                    pyperclip.copy(password)
+                                    to_clipboard(password)
                                     print(
                                         f"{GREEN}Password copied to clipboard! You can paste it with CTRL + V.{RESET}\n"
                                     )
@@ -2111,7 +2117,7 @@ def findProfileData(hashed_pass, db):
                                 )
                                 break
                             elif option == "c":
-                                pyperclip.copy(password)
+                                to_clipboard(password)
                                 print(
                                     f"\n{GREEN}Password copied to clipboard! You can paste with CTRL + V.{RESET}\n"
                                 )
@@ -2318,7 +2324,7 @@ def tagProfiles(hashed_pass, db):
                             )
                             break
                         elif option == "c":
-                            pyperclip.copy(password)
+                            to_clipboard(password)
                             print(
                                 f"\n{GREEN}Password copied to clipboard! You can paste with CTRL + V.{RESET}\n"
                             )
@@ -2462,7 +2468,7 @@ def readAllProfiles(hashed_pass, db):
                                 print(f"{GREEN}Password request granted! \n\n{DBLUE}Password:{RESET} {password}{RESET}\n")
                                 break
                             elif copy_choice == "c":
-                                pyperclip.copy(password)
+                                to_clipboard(password)
                                 print(f"{GREEN}Password copied to clipboard! You can paste it with CTRL + V.{RESET}\n")
                                 break
                             elif copy_choice == ".c" or copy_choice == timeoutGlobalCode:
@@ -2939,7 +2945,7 @@ def displayFavoriteNotes(hashed_pass, db):
                                         print(f"\n{GOLD}Full Note Content: {RESET}{decrypted_content}\n")
                                     break
                                 elif copy_choice == "c":
-                                    pyperclip.copy(decrypted_content)
+                                    to_clipboard(decrypted_content)
                                     print(f"{GREEN}Note content copied to clipboard! You can paste it with CTRL + V.{RESET}\n")
                                     break
                                 elif copy_choice == ".c":
@@ -3423,7 +3429,7 @@ def findNoteData(hashed_pass, db):
                                         print(f"\n{GOLD}Full Note Content: {RESET}{content}\n")
                                     break
                                 elif action == "c":
-                                    pyperclip.copy(content)
+                                    to_clipboard(content)
                                     print(
                                         f"{GREEN}Note content copied to clipboard! You can paste it with CTRL + V.{RESET}\n"
                                     )
@@ -4832,7 +4838,7 @@ def tagNotes(hashed_pass, db):
                                         # Decrypt the content with enhanced security for copying
                                         decrypted_content = decode_and_decrypt("content", info, hashed_pass)
                                         
-                                        pyperclip.copy(decrypted_content)
+                                        to_clipboard(decrypted_content)
                                         print(
                                             f"{GREEN}Note content copied to clipboard! You can paste it with CTRL + V.{RESET}\n"
                                         )
@@ -5178,7 +5184,7 @@ def displayAllNotes(hashed_pass, db):
                                         print(f"{GOLD}Content: {RESET}{decrypted_content}\n")
                                     break
                                 elif copy_choice == "c":
-                                    pyperclip.copy(decrypted_content)
+                                    to_clipboard(decrypted_content)
                                     print(
                                         f"{GREEN}Note content copied to clipboard! You can paste it with CTRL + V.{RESET}\n"
                                     )

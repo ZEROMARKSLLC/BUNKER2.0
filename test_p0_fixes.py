@@ -133,7 +133,7 @@ salt = os.urandom(32)
 new_key = INIT.vault.derive_key_hybrid("hunter2pass", salt, INIT.PEPPER)
 legacy_key = INIT.vault.derive_key_hybrid("hunter2pass", salt, "hunter2pass")
 check("new scheme differs from legacy", new_key != legacy_key)
-cands = INIT.derive_candidate_keys("hunter2pass", salt)
+cands = list(INIT.derive_candidate_keys("hunter2pass", salt))
 check("candidates = [new, legacy]", cands == [new_key, legacy_key])
 
 # verify_password_enhanced accepts BOTH a new-scheme and a legacy verifier

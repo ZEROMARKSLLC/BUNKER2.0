@@ -106,33 +106,37 @@ def displaySection(title):
 cached_ip = None
 cache_lock = threading.Lock()
 ip_fetch_thread = None
+ip_fetch_stop = threading.Event()
 
 def start_ip_fetch_thread():
     global ip_fetch_thread
     if not ip_fetch_thread or not ip_fetch_thread.is_alive():
+        ip_fetch_stop.clear()
         ip_fetch_thread = threading.Thread(target=fetch_ip_thread_func, daemon=True)
         ip_fetch_thread.start()
 
 
 def stop_ip_fetch_thread():
     global ip_fetch_thread
-    if ip_fetch_thread and ip_fetch_thread.is_alive():
-        ip_fetch_thread = None
+    ip_fetch_stop.set()  # the loop observes this and exits
+    ip_fetch_thread = None
 
 
 
 def fetch_ip_thread_func():
     global cached_ip
-    while True:
+    while not ip_fetch_stop.is_set():
         current_connection = check_internet_connection()
+        ip = get_public_ipv4() if current_connection else None
         with cache_lock:
             if current_connection:
-                ip = get_public_ipv4()
                 if ip:  # Update cache only if new IP is successfully fetched
                     cached_ip = ip
             else:
                 cached_ip = ""  # Set cached_ip to empty string to indicate offline
-        time.sleep(30)  # Check every minute for internet connectivity changes
+        # Re-check every 30s, but wake immediately when stopped
+        if ip_fetch_stop.wait(30):
+            break
 
 def get_public_ipv4() -> Optional[str]:
     try:

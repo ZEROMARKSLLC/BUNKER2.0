@@ -229,8 +229,15 @@ class SecureVaultEnhanced:
             self.secure_wipe()
             raise ValueError(f"Failed to save {filename}: {str(e)}")
         
-    def secure_delete_on_failure(self):
-        """Securely delete all sensitive files"""
+    def secure_delete_on_failure(self, force=False):
+        """Securely delete all sensitive files.
+
+        Gated like self_destruct(): without force=True this is a loud
+        no-op, so no error handler can ever wipe the vault by accident."""
+        if not force:
+            print(f"{RED}** Secure delete suppressed. No files were "
+                  f"deleted — your data is intact. **{RESET}")
+            return
         sensitive_files = [
             self.config_file,
             self.database_file,
@@ -436,68 +443,6 @@ SALT_SIZE = 32
 NONCE_SIZE = 12
 TAG_SIZE = 16
 
-def overwrite_db(new_contents):
-    """Securely overwrite database with enhanced error handling and security
-    
-    Args:
-        new_contents: The new contents to write to the database file
-    """
-    try:
-        # Create a backup first
-        try:
-            if os.path.exists("Bunker.mmf"):
-                backup_name = f"Bunker.mmf.bak.{int(time.time())}"
-                with open("Bunker.mmf", "rb") as src, open(backup_name, "wb") as dst:
-                    dst.write(src.read())
-                    
-                # Set proper permissions on Unix-like systems
-                if os.name == 'posix':
-                    os.chmod(backup_name, 0o600)
-                print(f"{GOLD}Created backup: {backup_name}{RESET}")
-        except Exception as e:
-            print(f"{RED}Warning: Failed to create backup: {str(e)}{RESET}")
-        
-        # Ensure new_contents is in the correct format (bytes)
-        if isinstance(new_contents, str):
-            print(f"{GOLD}Converting string to bytes for database write...{RESET}")
-            new_contents = new_contents.encode()
-            
-        # Write new contents as binary
-        with open("Bunker.mmf", "wb") as file:
-            file.write(new_contents)
-            
-        # Set proper permissions on Unix-like systems
-        if os.name == 'posix':
-            os.chmod("Bunker.mmf", 0o600)
-            
-        # Verify the write was successful
-        if os.path.exists("Bunker.mmf"):
-            with open("Bunker.mmf", "rb") as file:
-                content = file.read()
-                if content != new_contents:
-                    raise ValueError("File verification failed")
-                    
-        print(f"{GREEN}Database saved successfully{RESET}")
-        return True
-        
-    except Exception as e:
-        print(f"{RED}** ALERT: Failed to overwrite database: {str(e)} **{RESET}")
-        
-        # Try to restore from backup if write failed
-        try:
-            backup_files = [f for f in os.listdir() if f.startswith("Bunker.mmf.bak.")]
-            if backup_files:
-                latest_backup = max(backup_files, key=lambda x: int(x.split(".")[-1]))
-                print(f"{GOLD}Attempting to restore from backup: {latest_backup}{RESET}")
-                
-                with open(latest_backup, "rb") as src, open("Bunker.mmf", "wb") as dst:
-                    dst.write(src.read())
-                    
-                print(f"{GREEN}Restored from backup{RESET}")
-        except Exception as restore_error:
-            print(f"{RED}** ALERT: Failed to restore from backup: {str(restore_error)} **{RESET}")
-            
-        return False
 
 def generate_export_encryption(passphrase):
     """Generate encryption key and verifier for exports with enhanced security"""
@@ -597,8 +542,21 @@ def load_encrypted_file(filename, hashed_pass):
     except Exception as e:
         raise ValueError(f"Failed to load {filename}: {str(e)}")
 
-def timeoutInput(caption, timeout=60, hashed_pass=None):
-    """Handle timeout input with enhanced security"""
+def timeoutInput(caption, timeout=None, hashed_pass=None):
+    """Handle timeout input with enhanced security.
+
+    timeout=None uses the user's configured auto-logout value (so every
+    prompt honors the setting, not just the login screen); timeout <= 0
+    means the timer is disabled and the prompt waits indefinitely."""
+    if timeout is None:
+        try:
+            timeout = load_ui_config().get("current_timeout", 60)
+        except SystemExit:
+            raise
+        except Exception:
+            timeout = 60
+    if timeout is None or timeout <= 0:
+        return input(caption)
     try:
         user_input = inputimeout(prompt=caption, timeout=timeout)
     except TimeoutOccurred:
@@ -614,13 +572,17 @@ def timeoutInput(caption, timeout=60, hashed_pass=None):
 PEPPER = os.environ.get("BUNKER_PEPPER", "")
 
 def derive_candidate_keys(password, salt):
-    """Derive the current-scheme key, plus the legacy (password-as-pepper)
-    key used by vaults created before the pepper fix. Try in order."""
-    keys = [vault.derive_key_hybrid(password, salt, PEPPER)]
+    """Yield the current-scheme key, then the legacy (password-as-pepper)
+    key used by vaults created before the pepper fix.
+
+    Lazy on purpose: each derivation costs a full Argon2id+PBKDF2 run
+    (~0.3s desktop, seconds on a phone), so the legacy key is only derived
+    when the current-scheme key fails."""
+    current = vault.derive_key_hybrid(password, salt, PEPPER)
+    yield current
     legacy = vault.derive_key_hybrid(password, salt, password)
-    if legacy != keys[0]:
-        keys.append(legacy)
-    return keys
+    if legacy != current:
+        yield legacy
 
 # Machine-local key for the pre-auth UI config (attempt counter, timeout).
 # Not secret-grade — an attacker with filesystem access already has the
@@ -699,16 +661,13 @@ def secure_cleanup_common():
     This handles the sensitive data cleanup without any user messaging.
     """
     try:
-        # Reset global variables
-        global cached_ip
-        cached_ip = None
-        
-        # Clear any active threads
+        # Stop the IP-fetch thread and clear its cache (the state lives in
+        # SHARED_RESOURCES, not this module)
         try:
-            # Stop any running background threads
-            if 'ip_fetch_thread' in globals() and globals()['ip_fetch_thread'] is not None:
-                if hasattr(globals()['ip_fetch_thread'], 'do_run'):
-                    globals()['ip_fetch_thread'].do_run = False
+            import main.SHARED_RESOURCES as _sr
+            _sr.stop_ip_fetch_thread()
+            with _sr.cache_lock:
+                _sr.cached_ip = None
         except Exception:
             # Silently handle thread cleanup errors
             pass
@@ -2035,72 +1994,3 @@ def changeAutoLogoutTimer(hashed_pass, db):
         if 'hashed_pass' in locals(): del hashed_pass
         vault.secure_wipe()
 
-#debug fuction not connected not needed but good to have to clean db with out restarting setup
-def cleanupDatabase(hashed_pass, db):
-    """
-    Remove invalid entries from the database with enhanced security.
-    Handles both profile entries and note entries.
-    """
-    invalid_entries = []
-    cleaned = False
-    profile_count = 0
-    note_count = 0
-
-    for entry_id, info in db.items():
-        if not isinstance(info, dict):
-            # Not a dictionary, definitely invalid
-            invalid_entries.append(entry_id)
-            cleaned = True
-            continue
-            
-        # Check if this is a profile entry
-        if "password" in info and "domain" in info:
-            # This should be a profile entry
-            if (not isinstance(info.get("domain"), (str, bytes)) or
-                not isinstance(info.get("password"), (str, bytes)) or
-                "content" in info or  # Profiles shouldn't have content
-                "tags" in info):      # Profiles shouldn't have tags
-                invalid_entries.append(entry_id)
-                cleaned = True
-                profile_count += 1
-                
-        # Check if this is a note entry
-        elif "content" in info and "title" in info:
-            # This should be a note entry
-            if (not isinstance(info.get("title"), (str, bytes)) or
-                not isinstance(info.get("content"), (str, bytes)) or
-                "password" in info or  # Notes shouldn't have password
-                "domain" in info):     # Notes shouldn't have domain
-                invalid_entries.append(entry_id)
-                cleaned = True
-                note_count += 1
-                
-        else:
-            # Neither a valid profile nor a valid note
-            invalid_entries.append(entry_id)
-            cleaned = True
-
-    # Remove invalid entries
-    for entry_id in invalid_entries:
-        del db[entry_id]
-
-    # Save cleaned database
-    if cleaned:
-        try:
-            # Use enhanced security for encryption
-            encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-            
-            # Write directly as bytes to ensure consistent format
-            with open("Bunker.mmf", "wb") as f:
-                f.write(encrypted_db)
-                
-            print(f"\n{GREEN}** Database cleaned up: Removed {len(invalid_entries)} invalid entries **{RESET}")
-            if profile_count > 0:
-                print(f"{GREEN}** {profile_count} invalid profile entries removed **{RESET}")
-            if note_count > 0:
-                print(f"{GREEN}** {note_count} invalid note entries removed **{RESET}")
-        except Exception as e:
-            print(f"{RED} ** ALERT: Failed to update database. Error: {str(e)} **{RESET}")
-            return None
-
-    return db
