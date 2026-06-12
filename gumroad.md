@@ -38,6 +38,8 @@ Think of this as your chance to "invest" in a startup… except you actually get
 🛠️ WHAT’S IN THE BOX?
 
 BUNKER.py (The main script—flex your Python skills)
+main/ folder (INITIALIZE.py + SHARED_RESOURCES.py—the engine room)
+requirements.txt (One-command dependency install)
 README.md (Instructions so easy, even your non-techy friend could follow)
 Demo password: rootroot (Change this ASAP unless you wanna get hacked)
 
@@ -59,7 +61,7 @@ Download Python 3 (python.org)
 
 Run one command:bash
 
-pip install cryptography pyperclip psutil requests && python3 BUNKER.py
+pip install -r requirements.txt && python3 BUNKER.py
 
 
 

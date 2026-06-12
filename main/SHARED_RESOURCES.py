@@ -1,4 +1,4 @@
-import sys, random, string, os, platform, gc,\
+import sys, random, string, os, platform, gc, glob,\
 pyperclip, requests, psutil, datetime, secrets
 
 
@@ -106,33 +106,41 @@ def displaySection(title):
 cached_ip = None
 cache_lock = threading.Lock()
 ip_fetch_thread = None
+ip_fetch_stop_event = threading.Event()
 
 def start_ip_fetch_thread():
     global ip_fetch_thread
     if not ip_fetch_thread or not ip_fetch_thread.is_alive():
+        ip_fetch_stop_event.clear()
         ip_fetch_thread = threading.Thread(target=fetch_ip_thread_func, daemon=True)
         ip_fetch_thread.start()
 
 
 def stop_ip_fetch_thread():
     global ip_fetch_thread
-    if ip_fetch_thread and ip_fetch_thread.is_alive():
-        ip_fetch_thread = None
+    # Signal the fetch loop to exit so it stops making network calls
+    ip_fetch_stop_event.set()
+    ip_fetch_thread = None
 
 
 
 def fetch_ip_thread_func():
     global cached_ip
-    while True:
+    while not ip_fetch_stop_event.is_set():
         current_connection = check_internet_connection()
+        new_ip = None
+        if current_connection:
+            # Do the network fetch OUTSIDE the lock
+            new_ip = get_public_ipv4()
         with cache_lock:
             if current_connection:
-                ip = get_public_ipv4()
-                if ip:  # Update cache only if new IP is successfully fetched
-                    cached_ip = ip
+                if new_ip:  # Update cache only if new IP is successfully fetched
+                    cached_ip = new_ip
             else:
                 cached_ip = ""  # Set cached_ip to empty string to indicate offline
-        time.sleep(30)  # Check every minute for internet connectivity changes
+        # Wait 30s between checks; wakes up immediately if stop is requested
+        if ip_fetch_stop_event.wait(30):
+            break
 
 def get_public_ipv4() -> Optional[str]:
     try:
@@ -175,6 +183,9 @@ def print_IP(disable_ipv4: bool) -> str:
             ipv4_string = "   (IP fetching disabled)  "
         elif cached_ip == "":
             ipv4_string = "INTERNET IP:   (OFFLINE)   "
+        elif cached_ip is None:
+            # Not fetched yet -- never display "None" in the banner
+            ipv4_string = "INTERNET IP:      ...      "
         else:
             ipv4_string = f"INTERNET IP: {cached_ip}"
     return ipv4_string
@@ -464,13 +475,17 @@ def self_destruct():
     """Securely delete all sensitive files with multiple overwrite passes and trash bin bypass"""
     # Updated list of sensitive files
     sensitive_files = [
-        "Bunker.mmf", 
-        "bunker.cfg", 
-        "bunker.salt",     
-        "config.cfg",   
-        ".vault_config",   
-        "*.bak.*"         
-
+        "Bunker.mmf",
+        "bunker.cfg",
+        "bunker.salt",
+        "config.cfg",
+        ".vault_config",
+        "*.bak.*",
+        "Bunker.mmf.bak.*",
+        "Bunker.mmf.tmp",
+        "bunker.cfg.tmp",
+        "bunker.salt.tmp",
+        "config.cfg.tmp"
     ]
     
     print(f"{GOLD}Self-destruct initiated. Searching for sensitive files...{RESET}")
@@ -488,8 +503,20 @@ def self_destruct():
             
             # Filter out None values
             paths_to_check = [p for p in paths_to_check if p]
-            
-            for path in paths_to_check:
+
+            # Expand wildcard patterns (e.g. "*.bak.*") into real matches --
+            # os.path.exists() never matches a literal glob pattern
+            expanded_paths = []
+            for candidate in paths_to_check:
+                if "*" in candidate or "?" in candidate:
+                    expanded_paths.extend(glob.glob(candidate))
+                else:
+                    expanded_paths.append(candidate)
+
+            # De-duplicate while preserving order
+            expanded_paths = list(dict.fromkeys(expanded_paths))
+
+            for path in expanded_paths:
                 if os.path.exists(path):
                     try:
                         print(f"{GOLD}Securely deleting: {path}{RESET}")
@@ -570,22 +597,29 @@ def clear_clipboard(delay):
 
 # Function to copy input to clipboard and start timer to clear clipboard
 def to_clipboard(input_to_copy):
-    """Copy data to clipboard with auto-clear timer and enhanced security"""
+    """Copy data to clipboard with auto-clear timer and enhanced security.
+
+    Prints one concise status message itself and returns an empty string,
+    so both `to_clipboard(x)` and `print(to_clipboard(x))` behave sanely.
+    """
     try:
         # Convert input to string and copy to clipboard
         pyperclip.copy(str(input_to_copy))
-        
+
         # Create daemon thread to clear clipboard after delay
         clear_thread = threading.Thread(
-            target=clear_clipboard, 
+            target=clear_clipboard,
             args=(30,),
             daemon=True  # Make thread daemon so it won't prevent program exit
         )
         clear_thread.start()
-        
-        return f"{GREEN}\n** SUCCESS: Password was saved to clipboard. It will be removed from your clipboard after 30 seconds. **{RESET}"
-    except Exception as e:
-        return f"{RED}\n** ALERT: Failed to copy to clipboard: {str(e)} **{RESET}"
+
+        print(f"{GREEN}\n** SUCCESS: Copied to clipboard. It will be cleared automatically after 30 seconds. **{RESET}")
+    except Exception:
+        # pyperclip raises if no clipboard backend is available (e.g. headless
+        # Linux without xclip/xsel) -- report cleanly without internals
+        print(f"{RED}\n** ALERT: Clipboard is unavailable on this system. Nothing was copied. **{RESET}")
+    return ""
 
 
 # SYSTEM INFORMATION FUNCTIONS
@@ -626,9 +660,9 @@ def check_vpn():
         # Check routing table for VPN gateways
         try:
             if os.name == 'nt':  # Windows
-                routes = subprocess.check_output("route print", shell=True, stderr=subprocess.DEVNULL).decode('utf-8', errors='ignore')
+                routes = subprocess.check_output(["route", "print"], stderr=subprocess.DEVNULL).decode('utf-8', errors='ignore')
             else:  # Unix/Linux/Mac
-                routes = subprocess.check_output("netstat -nr", shell=True, stderr=subprocess.DEVNULL).decode('utf-8', errors='ignore')
+                routes = subprocess.check_output(["netstat", "-nr"], stderr=subprocess.DEVNULL).decode('utf-8', errors='ignore')
             
             # Common VPN gateway patterns
             vpn_gateways = ["10.8.", "10.9.", "10.10.", "192.168.10."]

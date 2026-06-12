@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+.qodo
+
+# BUNKER runtime state — created/mutated by the app; never commit
+Bunker.mmf
+Bunker.mmf.bak.*
+*.tmp
+bunker.salt
+bunker.cfg
+config.cfg
+
+# User exports (may contain real secrets)
+*_export*.json

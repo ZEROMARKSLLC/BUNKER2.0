@@ -16,7 +16,7 @@ https://zeromarks.gumroad.com/l/vmnbz - GUMROAD
 
 **Key Features:**
 - **AES-256 Encryption** - Industry standard military-grade security
-- **100% Local Storage** - No cloud, no tracking, no data mining
+- **100% Local Storage** - No cloud, no tracking, no data mining (optional IP-display feature contacts public IP-lookup services; disable it in Settings for fully offline use)
 - **Self-Destruct Protection** - Multiple security triggers protect your vault
 - **Auto-Logout Timer** - Configurable inactivity protection
 - **Password Generator** - Create uncrackable passwords instantly
@@ -36,7 +36,7 @@ To run this project, you need Python 3 installed on your system:
 Go to the Python download page: https://www.python.org/downloads/
 
 ### 2. Select the Version
-Download the latest stable version of Python 3 (recommended)
+Download the latest stable version of Python 3 (recommended). **BUNKER 2.0 requires Python 3.10 or newer.**
 
 ### 3. Choose Your Installer
 - **Windows:** Download the executable installer (`.exe`)
@@ -64,15 +64,20 @@ cd ~/Desktop/BUNKER2.0
 
 **Required Dependencies:**
 - `inputimeout` - Timeout handling for secure input
-- `keyboard` - Keyboard event detection
 - `cryptography` - **AES-256 encryption library**
+- `argon2-cffi` - Argon2 key derivation
 - `pyperclip` - Secure clipboard management
 - `psutil` - System information monitoring
 - `requests` - Network utilities
 
 **Installation Command:**
 ```bash
-pip install inputimeout keyboard cryptography pyperclip psutil requests argon2-cffi
+pip install -r requirements.txt
+```
+
+Or install the packages explicitly:
+```bash
+pip install inputimeout cryptography argon2-cffi pyperclip psutil requests
 ```
 **Important:** Make sure you're in the `BUNKER2.0` directory (showing `BUNKER2.0 %`) and not the home directory (`~ %`) for successful installation.
 
@@ -89,25 +94,15 @@ pip install [missing_package_name]
 
 ### Step 3: Launch BUNKER 2.0
 
-**For New Vault Setup:**
-Delete the `BUNKER.mmf` file from the BUNKER2.0 folder, then run:
+Run:
 ```bash
 python3 BUNKER.py
 ```
 
-**For Demo Mode:**
-Keep the existing `BUNKER.mmf` file and run:
-```bash
-python3 BUNKER.py
-```
+On first run (no `Bunker.mmf` vault file present), BUNKER walks you through setup and creates a fresh encrypted vault with your own master password. On later runs, you'll reach the BUNKER ACCESS page and log in with that password.
 
----
-
-## 🔐 Demo Access
-
-After launching, you'll reach the BUNKER ACCESS page.
-
-**Demo Password:** `rootroot`
+**Starting Over:**
+To wipe everything and start fresh, delete the `Bunker.mmf`, `bunker.salt`, `bunker.cfg`, and `config.cfg` files from the BUNKER2.0 folder, then run `python3 BUNKER.py` again. This is irreversible — your stored data cannot be recovered.
 
 ---
 
@@ -155,7 +150,7 @@ If you experience different errors, please reach out through our social media ch
 - **Website:** [zeromarks.net](http://www.zeromarks.net)
 - **YouTube:** [@ZEROMARKSLLC](https://www.youtube.com/@ZEROMARKSLLC)
 - **GitHub:** [github.com/zeromarksllc](https://www.github.com/zeromarksllc)
-- **Reddit:** [r/zeromarksllc](https://www.reddit.com/zeromarksllc)
+- **Reddit:** [r/zeromarksllc](https://www.reddit.com/r/zeromarksllc)
 
 **Social Media:**
 - **Twitter/X:** [@zeromarksvpn](https://x.com/zeromarksvpn)

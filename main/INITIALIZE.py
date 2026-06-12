@@ -1,4 +1,4 @@
-import base64, json, sys, getpass, os, gc, random, string, \
+import base64, json, sys, getpass, os, gc, random, string, secrets, \
 platform, subprocess, threading, time, pyperclip, signal,time,datetime
 
 from typing import Optional
@@ -24,6 +24,20 @@ FORANGE, FBLUE, FRED, GOLD, GREEN, RED, RESET, DPURPLE,
 MUSTARD, VINTAGE, LPURPLE, PURPLE, CYAN )
 
 ###BUNKER HELPERS###
+
+def _atomic_write_bytes(path, data):
+    """Write bytes to a temp file and atomically replace the target.
+
+    Guarantees the original file is never destroyed by a partial or
+    failed write: either the new contents land completely, or the old
+    file is left untouched.
+    """
+    tmp = path + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
 
 class SecureVaultEnhanced:
     def __init__(self):
@@ -213,11 +227,11 @@ class SecureVaultEnhanced:
                 
             # Encrypt the data
             encrypted_data = self.encrypt_data(data, key)
-            
-            # Write to file as bytes
-            with open(filename, 'wb') as f:
-                f.write(encrypted_data)
-                
+
+            # Write to file as bytes (atomically, so a failed write
+            # can never destroy the existing file)
+            _atomic_write_bytes(filename, encrypted_data)
+
             # Set proper permissions on Unix-like systems
             if os.name == 'posix':
                 os.chmod(filename, 0o600)
@@ -260,7 +274,7 @@ class SecureVaultEnhanced:
                                 os.fsync(file.fileno())
                         
                         # Rename file to random name before deletion to bypass file recovery
-                        random_name = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+                        random_name = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(16))
                         random_path = os.path.join(os.path.dirname(file_path), random_name)
                         os.rename(file_path, random_path)
                         
@@ -388,8 +402,7 @@ class SecureVaultEnhanced:
             # Encrypt the config dict as JSON using the provided key
             json_bytes = json.dumps(config_data).encode()
             encrypted = self.encrypt_data(json_bytes, hashed_pass)
-            with open(self.config_file, "wb") as f:
-                f.write(encrypted)
+            _atomic_write_bytes(self.config_file, encrypted)
             if os.name == 'posix':
                 os.chmod(self.config_file, 0o600)
         except Exception as e:
@@ -461,10 +474,9 @@ def overwrite_db(new_contents):
             print(f"{GOLD}Converting string to bytes for database write...{RESET}")
             new_contents = new_contents.encode()
             
-        # Write new contents as binary
-        with open("Bunker.mmf", "wb") as file:
-            file.write(new_contents)
-            
+        # Write new contents as binary (atomic replace)
+        _atomic_write_bytes("Bunker.mmf", new_contents)
+
         # Set proper permissions on Unix-like systems
         if os.name == 'posix':
             os.chmod("Bunker.mmf", 0o600)
@@ -488,10 +500,10 @@ def overwrite_db(new_contents):
             if backup_files:
                 latest_backup = max(backup_files, key=lambda x: int(x.split(".")[-1]))
                 print(f"{GOLD}Attempting to restore from backup: {latest_backup}{RESET}")
-                
-                with open(latest_backup, "rb") as src, open("Bunker.mmf", "wb") as dst:
-                    dst.write(src.read())
-                    
+
+                with open(latest_backup, "rb") as src:
+                    _atomic_write_bytes("Bunker.mmf", src.read())
+
                 print(f"{GREEN}Restored from backup{RESET}")
         except Exception as restore_error:
             print(f"{RED}** ALERT: Failed to restore from backup: {str(restore_error)} **{RESET}")
@@ -575,9 +587,9 @@ def verify_export_encryption(passphrase, salt, verifier):
         except Exception:
             return None
         
-    except Exception as e:
-        # Log the error but don't expose it to the user
-        print(f"{RED}** DEBUG: Verification failed: {str(e)} **{RESET}")
+    except Exception:
+        # Don't expose internal error details to the user
+        print(f"{RED}** ALERT: Could not verify export passphrase. **{RESET}")
         return None
 
 def load_encrypted_file(filename, hashed_pass):
@@ -616,22 +628,30 @@ def load_ui_config(hashed_pass=None):
         decrypted = vault.decrypt_data(encrypted, key)
         return json.loads(decrypted.decode("utf-8"))
     except Exception:
-            # Self-destruct if config.cfg is missing or corrupted
-            print(f"{RED}** ALERT: UI config file missing or corrupted. Self-destructing... **{RED}")
-            self_destruct()
-            sys.exit(1)
-    
+        # config.cfg only holds UI settings -- never destroy the vault over it.
+        # Rebuild a default config instead.
+        print(f"{GOLD}Warning: UI config file missing or corrupted. Rebuilding default settings.{RESET}")
+        default_config = {
+            "attempts": 0,
+            "max_attempts": 3,
+            "disable_ipv4": True,
+            "current_timeout": 60
+        }
+        try:
+            save_ui_config(default_config, hashed_pass)
+        except Exception:
+            print(f"{GOLD}Warning: Could not save rebuilt UI config.{RESET}")
+        return default_config
+
 def save_ui_config(config, hashed_pass=None):
     # If you have the password/key, use it; otherwise, use a static key for now
     key = hashed_pass or b"0"*32  # Replace with a real key if possible
     data = json.dumps(config).encode("utf-8")
     encrypted = vault.encrypt_data(data, key)
-    with open("config.cfg", "wb") as f:
-        f.write(encrypted)
+    _atomic_write_bytes("config.cfg", encrypted)
 
 def save_salt(salt, filename="bunker.salt"):
-    with open(filename, "wb") as f:
-        f.write(salt)
+    _atomic_write_bytes(filename, salt)
 
 def load_salt(filename="bunker.salt"):
     with open(filename, "rb") as f:
@@ -896,13 +916,12 @@ def saveDatabase(db, hashed_pass):
     try:
         db_bytes = json.dumps(db).encode('utf-8')
         encrypted_db = vault.encrypt_data(db_bytes, hashed_pass)
-        with open("Bunker.mmf", "wb") as f:
-            f.write(encrypted_db)
+        # Validate the encrypted blob BEFORE touching the existing database
+        if len(encrypted_db) < 100 and len(db) > 0:
+            raise ValueError(f"Encrypted database too small ({len(encrypted_db)} bytes)")
+        _atomic_write_bytes("Bunker.mmf", encrypted_db)
         if os.name == 'posix':
             os.chmod("Bunker.mmf", 0o600)
-        file_size = os.path.getsize("Bunker.mmf")
-        if file_size < 100 and len(db) > 0:
-            raise ValueError(f"Database file too small ({file_size} bytes)")
         # Only update config if it loads successfully
         try:
             vault.manage_config(
@@ -930,7 +949,6 @@ def loadDatabase(hashed_pass):
         # Check if database file exists
         if not os.path.exists("Bunker.mmf"):
             print(f"{GOLD}Database file does not exist. Creating new empty database.{RESET}")
-            self_destruct()
             return {}
             
         # Read the encrypted database in binary mode
@@ -1007,6 +1025,12 @@ def verify_setup(vault: SecureVaultEnhanced, password: str, salt: bytes, verifie
 def vaultSetup():
     """Setup vault with enhanced security while maintaining original process"""
     try:
+        # Never clobber an existing vault -- setup is for fresh installs only
+        if os.path.exists("Bunker.mmf"):
+            print(f"{RED}** ALERT: A vault (Bunker.mmf) already exists in this directory. "
+                  f"Setup aborted to protect your existing data. Delete Bunker.mmf manually if you really want to start over. **{RESET}")
+            return False
+
         while True:
             setup_choice = input(f"\n{GOLD}Enter (.g) for simplified user guide, or (y/n) if you're ready to setup bunker password: {RESET}").lower()
             if setup_choice == 'y':
@@ -1119,8 +1143,7 @@ def vaultSetup():
 
             # Encrypt and save config
             encrypted_config = vault.encrypt_data(json.dumps(config).encode(), derived_key)
-            with open("bunker.cfg", "wb") as f:
-                f.write(encrypted_config)
+            _atomic_write_bytes("bunker.cfg", encrypted_config)
             if os.name == 'posix':
                 os.chmod("bunker.cfg", 0o600)
 
@@ -1156,9 +1179,6 @@ def vaultSetup():
         return False
     finally:
         # Secure cleanup
-        for var in ['password_provided', 'password_confirmation', 'derived_key', 'master_key']:
-            if var in locals():
-                del locals()[var]
         vault.secure_wipe()
              
 def main():
@@ -1670,9 +1690,28 @@ def changeMasterPassword(hashed_pass, db):
                 print(f"{RED} ** ALERT: Invalid input. Please enter a valid password. **{RESET}")
                 continue
 
+            # Confirm the new password -- a typo here would lock the user out forever
+            if show_password_choice == "y":
+                password_confirmation = timeoutInput(
+                    f"{GOLD}Confirm your new master password: {RESET}"
+                )
+            else:
+                password_confirmation = timeout_getpass(
+                    f"{GOLD}Confirm your new master password: {RESET}",
+                    current_timeout
+                )
+
+            if password_confirmation == timeoutGlobalCode:
+                return False
+
+            if password_provided != password_confirmation:
+                print(f"{RED} ** ALERT: Passwords do not match. Please try again. **{RESET}")
+                continue
+
             try:
                 # Derive key and check if it matches existing password
-                derived_key = vault.derive_key_hybrid(password_provided, current_salt)
+                # (must use the same derivation as login: pepper = password)
+                derived_key = vault.derive_key_hybrid(password_provided, current_salt, password_provided)
                 if derived_key == hashed_pass:
                     print(f"{RED}\n ** ALERT: New password cannot be the same as the current password. **{RESET}")
                     while True:
@@ -1711,26 +1750,42 @@ def changeMasterPassword(hashed_pass, db):
                 config["last_exit"] = str(datetime.datetime.now().timestamp())
                 config["timestamp"] = str(time.time())
 
-                
-                # Save new salt
-                save_salt(new_salt)
+                # Keep copies of the current on-disk state so any failure
+                # mid re-key can be rolled back (a half re-keyed vault
+                # would mean a permanent lockout).
+                with open("Bunker.mmf", "rb") as f:
+                    old_db_bytes = f.read()
+                old_salt_bytes = load_salt()
 
-                # Encrypt and save config with new key
-                encrypted_config = vault.encrypt_data(json.dumps(config).encode(), new_derived_key)
-                with open("bunker.cfg", "wb") as f:
-                    f.write(encrypted_config)
+                # Step 1: re-encrypt the database with the new key FIRST.
+                # saveDatabase writes atomically, so on failure the old
+                # database is untouched and nothing has changed yet.
+                if not saveDatabase(db, new_derived_key):
+                    print(f"{RED} ** ALERT: Could not re-encrypt the database. Master password was NOT changed. **{RESET}")
+                    return False
 
-                # Update and save UI config
-                ui_config = {
-                    "attempts": 0,
-                    "max_attempts": config.get("max_attempts", 3),
-                    "disable_ipv4": config.get("settings", {}).get("disable_ipv4", True),
-                    "current_timeout": config.get("timeout_value", 60)
-                }
+                # Step 2: save the new salt; roll back the database on failure
+                try:
+                    save_salt(new_salt)
+                except Exception as salt_error:
+                    _atomic_write_bytes("Bunker.mmf", old_db_bytes)
+                    print(f"{RED} ** ALERT: Could not save new salt: {str(salt_error)}. Master password was NOT changed. **{RESET}")
+                    return False
+
+                # Step 3: save the new config; roll back salt and database on failure
+                try:
+                    encrypted_config = vault.encrypt_data(json.dumps(config).encode(), new_derived_key)
+                    _atomic_write_bytes("bunker.cfg", encrypted_config)
+                except Exception as config_error:
+                    _atomic_write_bytes("bunker.salt", old_salt_bytes)
+                    _atomic_write_bytes("Bunker.mmf", old_db_bytes)
+                    print(f"{RED} ** ALERT: Could not save new config: {str(config_error)}. Master password was NOT changed. **{RESET}")
+                    return False
+
+                # Update and save UI config -- preserve the user's current
+                # settings (timeout, max attempts, IP toggle), only reset attempts
+                ui_config["attempts"] = 0
                 save_ui_config(ui_config)
-
-                # Save database with new key if needed
-                saveDatabase(db, new_derived_key)
 
                 print(f"{GREEN}\n ** SUCCESS: Master password changed successfully! Log in again to access the note manager. **{RESET}")
                 timeoutInput(f"\n{GOLD}Press 'enter' to logout...{RESET}")
@@ -1745,6 +1800,7 @@ def changeMasterPassword(hashed_pass, db):
                 return False
             finally:
                 if 'password_provided' in locals(): del password_provided
+                if 'password_confirmation' in locals(): del password_confirmation
                 if 'new_derived_key' in locals(): del new_derived_key
                 if 'hashed_pass' in locals(): del hashed_pass
                 vault.secure_wipe()
@@ -1975,11 +2031,10 @@ def cleanupDatabase(hashed_pass, db):
         try:
             # Use enhanced security for encryption
             encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-            
-            # Write directly as bytes to ensure consistent format
-            with open("Bunker.mmf", "wb") as f:
-                f.write(encrypted_db)
-                
+
+            # Write directly as bytes to ensure consistent format (atomic replace)
+            _atomic_write_bytes("Bunker.mmf", encrypted_db)
+
             print(f"\n{GREEN}** Database cleaned up: Removed {len(invalid_entries)} invalid entries **{RESET}")
             if profile_count > 0:
                 print(f"{GREEN}** {profile_count} invalid profile entries removed **{RESET}")
