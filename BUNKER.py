@@ -10,7 +10,8 @@ changeAutoLogoutTimer, MIN_PASSWORD_LENGTH,load_ui_config,
 MAX_PASSWORD_LENGTH, RECOMMENDED_PASSWORD_LENGTH, save_ui_config,
 timeout_getpass, overwrite_db, timeoutCleanup, timeoutGlobalCode,
 setup_secure_exit_handlers, secure_cleanup_common, interruptCleanup,
-verify_export_encryption, generate_export_encryption, saveDatabase )
+verify_export_encryption, generate_export_encryption, saveDatabase,
+atomic_write_bytes )
 
 from main.SHARED_RESOURCES import (L_CYAN, BUNKER, DBLUE, 
 FORANGE, FBLUE, FRED, GOLD, GREEN, RED, RESET, DPURPLE,
@@ -246,8 +247,12 @@ def main():
             try:
                 dataBase = loadDatabase(hashed_pass)
             except Exception as e:
-                print(f"{RED} ** ALERT: Failed to decrypt database: {str(e)}. Self destructing... **{RESET}")
-                #self_destruct()
+                # Never destroy key material here: with bunker.salt and
+                # bunker.cfg intact, a backup of Bunker.mmf is still usable.
+                print(f"{RED} ** ALERT: Failed to decrypt database: {str(e)} **{RESET}")
+                print(f"{RED} ** Vault files were left intact — restore Bunker.mmf from a backup. **{RESET}")
+                secure_cleanup_common()
+                sys.exit(1)
 
             # Clean up sensitive data
             if 'entered_pass' in locals():
@@ -273,8 +278,11 @@ def main():
         # This is a fallback in case the signal handler doesn't catch it
         interruptCleanup()
     except Exception as e:
-        print(f"{RED}** ALERT: Fatal error: {str(e)}. Self destructing... **{RESET}")
-        self_destruct()
+        # Unexpected errors must never destroy the vault — only the explicit
+        # max-attempts path above is allowed to self-destruct.
+        print(f"{RED}** ALERT: Fatal error: {str(e)}. Exiting without modifying vault files. **{RESET}")
+        secure_cleanup_common()
+        sys.exit(1)
 
     # Normal exit - if we reach here, exit cleanly
     print(f"{GREEN}Thank you for using BUNKER. ZEROMARKS Dev Team!{RESET}")
@@ -327,24 +335,30 @@ def manage_passwords_and_notes(hashed_pass):
 
             # Menu options
             if user_cmd == "a":
-                # Get the latest database before passing to manager
+                # Get the latest database before passing to manager; on a
+                # read failure, return to the menu rather than operating on
+                # a stale snapshot (which a later save would roll back to).
                 try:
                     with open("Bunker.mmf", "rb") as f:
                         latest_contents = f.read()
-                    timedOut = main_pwd_manager(hashed_pass, latest_contents)
                 except Exception as e:
                     print(f"{RED}** ALERT: Failed to read latest database: {str(e)} **{RESET}")
-                    timedOut = main_pwd_manager(hashed_pass, contents)
+                    input(f"{GOLD}Press ENTER to return to the menu...{RESET}")
+                    continue
+                timedOut = main_pwd_manager(hashed_pass, latest_contents)
 
             elif user_cmd == "s":
-                # Get the latest database before passing to manager
+                # Get the latest database before passing to manager; on a
+                # read failure, return to the menu rather than operating on
+                # a stale snapshot (which a later save would roll back to).
                 try:
                     with open("Bunker.mmf", "rb") as f:
                         latest_contents = f.read()
-                    timedOut = main_note_manager(hashed_pass, latest_contents)
                 except Exception as e:
                     print(f"{RED}** ALERT: Failed to read latest database: {str(e)} **{RESET}")
-                    timedOut = main_note_manager(hashed_pass, contents)
+                    input(f"{GOLD}Press ENTER to return to the menu...{RESET}")
+                    continue
+                timedOut = main_note_manager(hashed_pass, latest_contents)
 
             elif user_cmd == "d":
                 timedOut = changeDisplayIp(hashed_pass, disable_ipv4)
@@ -390,9 +404,12 @@ def manage_passwords_and_notes(hashed_pass):
                     input(f"{GOLD}Press ENTER to continue...{RESET}")
 
     except Exception as e:
+        # Keep all vault files intact: a read/decrypt error here is most
+        # likely corruption or a transient I/O failure, and destroying the
+        # salt/config would make even off-site backups undecryptable.
         print(f"{RED}** ALERT: Failed to manage database: {str(e)} **{RESET}")
-        vault.secure_delete_on_failure()
-        
+        print(f"{RED}** Vault files were left intact. Restart BUNKER; if the database is corrupted, restore Bunker.mmf from a backup. **{RESET}")
+
     finally:
         # Secure cleanup of sensitive data
         try:
@@ -1311,8 +1328,7 @@ def addProfile(hashed_pass, db):
                     "favorite": profile_data.get('favorite', False),
                 }
                 encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                with open("Bunker.mmf", "wb") as f:
-                    f.write(encrypted_db)
+                atomic_write_bytes("Bunker.mmf", encrypted_db)
                 clear_screen()
                 displayHeader(f"{CYAN}✏️  ADD PROFILE{RESET}")
                 print(f"{GREEN}** SUCCESS: Profile successfully created! **{RESET}")
@@ -1743,8 +1759,7 @@ def editProfileData(hashed_pass, db):
 
                 # Save encrypted database with enhanced security
                 encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                with open("Bunker.mmf", "wb") as f:
-                    f.write(encrypted_db)
+                atomic_write_bytes("Bunker.mmf", encrypted_db)
                 
                 clear_screen()
                 displayHeader(f"{CYAN}🖍️  EDIT A PROFILE{RESET}")
@@ -1942,8 +1957,7 @@ def deleteProfileData(hashed_pass, db):
             # Save changes to the database with enhanced security
             try:
                 encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                with open("Bunker.mmf", "wb") as f:
-                    f.write(encrypted_db)
+                atomic_write_bytes("Bunker.mmf", encrypted_db)
             except Exception as e:
                 print(f"{RED} ** ALERT: Failed to update database. Error: {str(e)} **{RESET}")
 
@@ -2570,8 +2584,7 @@ def main_note_manager(hashed_pass, contents):
                     if not timedOut:
                         try:
                             encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                            with open("Bunker.mmf", "wb") as f:
-                                f.write(encrypted_db)
+                            atomic_write_bytes("Bunker.mmf", encrypted_db)
                             # Update contents for future operations
                             contents = encrypted_db
                         except Exception as e:
@@ -2587,8 +2600,7 @@ def main_note_manager(hashed_pass, contents):
                     if not timedOut:
                         try:
                             encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                            with open("Bunker.mmf", "wb") as f:
-                                f.write(encrypted_db)
+                            atomic_write_bytes("Bunker.mmf", encrypted_db)
                             # Update contents for future operations
                             contents = encrypted_db
                         except Exception as e:
@@ -2610,8 +2622,7 @@ def main_note_manager(hashed_pass, contents):
                     if not timedOut:
                         try:
                             encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                            with open("Bunker.mmf", "wb") as f:
-                                f.write(encrypted_db)
+                            atomic_write_bytes("Bunker.mmf", encrypted_db)
                             # Update contents for future operations
                             contents = encrypted_db
                         except Exception as e:
@@ -2752,8 +2763,7 @@ def addNote(hashed_pass, db):
                     "private": is_private
                 }
                 encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                with open("Bunker.mmf", "wb") as f:
-                    f.write(encrypted_db)
+                atomic_write_bytes("Bunker.mmf", encrypted_db)
                 clear_screen()
                 displayHeader(f"{CYAN}📝 ADD A NOTE{RESET}")
                 print(f"{GREEN}** SUCCESS: Note successfully created! **{RESET}")
@@ -3207,8 +3217,7 @@ def editNoteData(hashed_pass, db):
                     encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
                     
                     # Write directly as bytes to ensure consistent format
-                    with open("Bunker.mmf", "wb") as f:
-                        f.write(encrypted_db)
+                    atomic_write_bytes("Bunker.mmf", encrypted_db)
 
                     # Success message
                     clear_screen()
@@ -4582,8 +4591,7 @@ def importProfiles(hashed_pass, db):
                 continue
 
         encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-        with open("Bunker.mmf", "wb") as f:
-            f.write(encrypted_db)
+        atomic_write_bytes("Bunker.mmf", encrypted_db)
 
         print(f"\n{GREEN}** SUCCESS: Import completed **{RESET}")
         print(f"{GOLD}Profiles imported: {imported_count}{RESET}")
@@ -5004,8 +5012,7 @@ def deleteNoteData(hashed_pass, db):
             try:
                 # Use enhanced security for encryption and save as binary
                 encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                with open("Bunker.mmf", "wb") as f:
-                    f.write(encrypted_db)
+                atomic_write_bytes("Bunker.mmf", encrypted_db)
             except Exception as e:
                 print(f"{RED} ** ALERT: Failed to update database. Error: {e} **{RESET}")
             

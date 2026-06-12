@@ -1,5 +1,5 @@
 import base64, json, sys, getpass, os, gc, random, string, \
-platform, subprocess, threading, time, pyperclip, signal,time,datetime
+platform, subprocess, threading, time, pyperclip, signal,time,datetime, tempfile
 
 from typing import Optional
 
@@ -608,6 +608,34 @@ def timeoutInput(caption, timeout=60, hashed_pass=None):
 
 PEPPER = os.environ.get("BUNKER_PEPPER", "default_pepper_value")
 
+DEFAULT_UI_CONFIG = {
+    "attempts": 0,
+    "max_attempts": 3,
+    "disable_ipv4": True,
+    "current_timeout": 60,
+}
+
+def atomic_write_bytes(path, data):
+    """Write bytes to path atomically: temp file in the same directory,
+    flush+fsync, then os.replace. A crash mid-write can never leave a
+    truncated file at the destination."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix=os.path.basename(path) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        if os.name == 'posix':
+            os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
 def load_ui_config(hashed_pass=None):
     try:
         key = hashed_pass or b"0"*32  # Replace with a real key if possible
@@ -615,23 +643,27 @@ def load_ui_config(hashed_pass=None):
             encrypted = f.read()
         decrypted = vault.decrypt_data(encrypted, key)
         return json.loads(decrypted.decode("utf-8"))
-    except Exception:
-            # Self-destruct if config.cfg is missing or corrupted
-            print(f"{RED}** ALERT: UI config file missing or corrupted. Self-destructing... **{RED}")
-            self_destruct()
-            sys.exit(1)
-    
+    except Exception as e:
+        # The UI config only holds preferences (timeout, attempt counter,
+        # IP display). If it is missing or corrupted, restore defaults and
+        # keep the vault intact — never destroy key material over this file.
+        print(f"{RED}** ALERT: UI config file missing or corrupted ({str(e)}). Restoring defaults... **{RESET}")
+        default_config = dict(DEFAULT_UI_CONFIG)
+        try:
+            save_ui_config(default_config, hashed_pass)
+        except Exception:
+            pass
+        return default_config
+
 def save_ui_config(config, hashed_pass=None):
     # If you have the password/key, use it; otherwise, use a static key for now
     key = hashed_pass or b"0"*32  # Replace with a real key if possible
     data = json.dumps(config).encode("utf-8")
     encrypted = vault.encrypt_data(data, key)
-    with open("config.cfg", "wb") as f:
-        f.write(encrypted)
+    atomic_write_bytes("config.cfg", encrypted)
 
 def save_salt(salt, filename="bunker.salt"):
-    with open(filename, "wb") as f:
-        f.write(salt)
+    atomic_write_bytes(filename, salt)
 
 def load_salt(filename="bunker.salt"):
     with open(filename, "rb") as f:
@@ -896,10 +928,7 @@ def saveDatabase(db, hashed_pass):
     try:
         db_bytes = json.dumps(db).encode('utf-8')
         encrypted_db = vault.encrypt_data(db_bytes, hashed_pass)
-        with open("Bunker.mmf", "wb") as f:
-            f.write(encrypted_db)
-        if os.name == 'posix':
-            os.chmod("Bunker.mmf", 0o600)
+        atomic_write_bytes("Bunker.mmf", encrypted_db)
         file_size = os.path.getsize("Bunker.mmf")
         if file_size < 100 and len(db) > 0:
             raise ValueError(f"Database file too small ({file_size} bytes)")
@@ -929,9 +958,10 @@ def loadDatabase(hashed_pass):
     try:
         # Check if database file exists
         if not os.path.exists("Bunker.mmf"):
-            print(f"{GOLD}Database file does not exist. Creating new empty database.{RESET}")
-            self_destruct()
-            return {}
+            # Do NOT destroy the remaining vault files: with bunker.salt and
+            # bunker.cfg intact, a backup copy of Bunker.mmf is still usable.
+            print(f"{RED}** ALERT: Database file Bunker.mmf is missing. Other vault files were left intact — restore Bunker.mmf from a backup. **{RESET}")
+            raise FileNotFoundError("Bunker.mmf is missing")
             
         # Read the encrypted database in binary mode
         with open("Bunker.mmf", "rb") as f:
@@ -1006,6 +1036,19 @@ def verify_setup(vault: SecureVaultEnhanced, password: str, salt: bytes, verifie
 
 def vaultSetup():
     """Setup vault with enhanced security while maintaining original process"""
+    # Snapshot which vault files already exist so a failed setup only removes
+    # files *this* run created — never pre-existing vault data.
+    _vault_files = ("bunker.salt", "config.cfg", "bunker.cfg", "Bunker.mmf")
+    _preexisting = {f for f in _vault_files if os.path.exists(f)}
+
+    def _cleanup_new_files():
+        for path in _vault_files:
+            if path not in _preexisting and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
     try:
         while True:
             setup_choice = input(f"\n{GOLD}Enter (.g) for simplified user guide, or (y/n) if you're ready to setup bunker password: {RESET}").lower()
@@ -1093,7 +1136,7 @@ def vaultSetup():
             timeout_value = setup_timeout()
             if timeout_value is None:
                 print(f"{GREEN}Operation cancelled...{RESET}")
-                vault.secure_delete_on_failure()
+                _cleanup_new_files()
                 return False
 
             # Create initial config structure
@@ -1119,10 +1162,7 @@ def vaultSetup():
 
             # Encrypt and save config
             encrypted_config = vault.encrypt_data(json.dumps(config).encode(), derived_key)
-            with open("bunker.cfg", "wb") as f:
-                f.write(encrypted_config)
-            if os.name == 'posix':
-                os.chmod("bunker.cfg", 0o600)
+            atomic_write_bytes("bunker.cfg", encrypted_config)
 
             # Initialize empty database separately
             empty_db = {}
@@ -1148,11 +1188,11 @@ def vaultSetup():
 
         except Exception as e:
             print(f"{RED}** ALERT: Setup failed: {str(e)} **{RESET}")
-            vault.secure_delete_on_failure()
+            _cleanup_new_files()
             return False
     except Exception as e:
         print(f"{RED}** ALERT: Setup failed: {str(e)} **{RESET}")
-        vault.secure_delete_on_failure()
+        _cleanup_new_files()
         return False
     finally:
         # Secure cleanup
@@ -1170,9 +1210,6 @@ def main():
         print(nuke_text)
         print(divider)
         sys.exit(1)
-
-if __name__ == "__main__":
-    main()
 
 
 def display_setup_guide():
@@ -1711,26 +1748,39 @@ def changeMasterPassword(hashed_pass, db):
                 config["last_exit"] = str(datetime.datetime.now().timestamp())
                 config["timestamp"] = str(time.time())
 
-                
-                # Save new salt
-                save_salt(new_salt)
-
-                # Encrypt and save config with new key
+                # Stage everything under the new key BEFORE touching any live
+                # file, so a failure here leaves the vault fully usable with
+                # the old password.
+                db_bytes = json.dumps(db).encode("utf-8")
+                encrypted_db = vault.encrypt_data(db_bytes, new_derived_key)
+                if vault.decrypt_data(encrypted_db, new_derived_key) != db_bytes:
+                    raise ValueError("Re-encrypted database failed verification")
                 encrypted_config = vault.encrypt_data(json.dumps(config).encode(), new_derived_key)
-                with open("bunker.cfg", "wb") as f:
-                    f.write(encrypted_config)
 
-                # Update and save UI config
-                ui_config = {
-                    "attempts": 0,
-                    "max_attempts": config.get("max_attempts", 3),
-                    "disable_ipv4": config.get("settings", {}).get("disable_ipv4", True),
-                    "current_timeout": config.get("timeout_value", 60)
-                }
+                # Keep in-memory rollback copies of the live files, then swap
+                # all three; if any swap fails, restore the old versions so
+                # the old password keeps working.
+                rollback = {}
+                for live in ("Bunker.mmf", "bunker.cfg", "bunker.salt"):
+                    if os.path.exists(live):
+                        with open(live, "rb") as f:
+                            rollback[live] = f.read()
+                try:
+                    atomic_write_bytes("Bunker.mmf", encrypted_db)
+                    atomic_write_bytes("bunker.cfg", encrypted_config)
+                    save_salt(new_salt)
+                except Exception:
+                    for live, old_data in rollback.items():
+                        try:
+                            atomic_write_bytes(live, old_data)
+                        except Exception:
+                            pass
+                    raise
+
+                # Reset the attempt counter but carry over the user's existing
+                # timeout/IP settings (loaded into ui_config at function start).
+                ui_config["attempts"] = 0
                 save_ui_config(ui_config)
-
-                # Save database with new key if needed
-                saveDatabase(db, new_derived_key)
 
                 print(f"{GREEN}\n ** SUCCESS: Master password changed successfully! Log in again to access the note manager. **{RESET}")
                 timeoutInput(f"\n{GOLD}Press 'enter' to logout...{RESET}")
@@ -1977,9 +2027,8 @@ def cleanupDatabase(hashed_pass, db):
             encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
             
             # Write directly as bytes to ensure consistent format
-            with open("Bunker.mmf", "wb") as f:
-                f.write(encrypted_db)
-                
+            atomic_write_bytes("Bunker.mmf", encrypted_db)
+
             print(f"\n{GREEN}** Database cleaned up: Removed {len(invalid_entries)} invalid entries **{RESET}")
             if profile_count > 0:
                 print(f"{GREEN}** {profile_count} invalid profile entries removed **{RESET}")
@@ -1990,3 +2039,7 @@ def cleanupDatabase(hashed_pass, db):
             return None
 
     return db
+
+
+if __name__ == "__main__":
+    main()
