@@ -11,7 +11,8 @@
 [![Offline](https://img.shields.io/badge/storage-100%25%20offline-orange)](#-security-model)
 [![Version](https://img.shields.io/badge/version-2.0-8A2BE2)](#-roadmap)
 
-<img src="img/bunker-demo.gif" width="850" alt="BUNKER 2.0 — animated walkthrough of login, password generation, and notes" />
+<img src="img/08-hero.png" width="850" alt="BUNKER 2.0 access screen — ASCII-art bunker login in a dark terminal" />
+<!-- TODO: replace with img/bunker-demo.gif once recorded via `vhs bunker-demo.tape` -->
 
 <br/>
 
