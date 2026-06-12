@@ -592,24 +592,31 @@ def verify_export_encryption(passphrase, salt, verifier):
         print(f"{RED}** ALERT: Could not verify export passphrase. **{RESET}")
         return None
 
-def load_encrypted_file(filename, hashed_pass):
-    """Load and decrypt an encrypted file with consistent format handling"""
-    try:
-        # Read file as binary
-        with open(filename, "rb") as f:
-            encrypted_data = f.read()
-            
-        # Decrypt the data
-        decrypted_data = vault.decrypt_data(encrypted_data, hashed_pass)
-        return decrypted_data
-        
-    except FileNotFoundError:
-        raise ValueError(f"File not found: {filename}")
-    except Exception as e:
-        raise ValueError(f"Failed to load {filename}: {str(e)}")
+_ui_timeout_cache = None
 
-def timeoutInput(caption, timeout=60, hashed_pass=None):
-    """Handle timeout input with enhanced security"""
+def get_effective_timeout():
+    """Return the user's configured auto-logout timeout (cached).
+
+    0 (or less) means the auto-logout timer is disabled.
+    """
+    global _ui_timeout_cache
+    if _ui_timeout_cache is None:
+        try:
+            _ui_timeout_cache = int(load_ui_config().get("current_timeout", 60))
+        except Exception:
+            _ui_timeout_cache = 60
+    return _ui_timeout_cache
+
+def timeoutInput(caption, timeout=None, hashed_pass=None):
+    """Prompt for input, auto-logging out after the configured idle timeout.
+
+    timeout=None -> use the user's configured auto-logout value.
+    timeout<=0  -> timer disabled; wait indefinitely.
+    """
+    if timeout is None:
+        timeout = get_effective_timeout()
+    if timeout is None or timeout <= 0:
+        return input(caption)
     try:
         user_input = inputimeout(prompt=caption, timeout=timeout)
     except TimeoutOccurred:
@@ -649,6 +656,13 @@ def save_ui_config(config, hashed_pass=None):
     data = json.dumps(config).encode("utf-8")
     encrypted = vault.encrypt_data(data, key)
     _atomic_write_bytes("config.cfg", encrypted)
+    # Keep the cached auto-logout value in sync with what was just saved
+    global _ui_timeout_cache
+    if "current_timeout" in config:
+        try:
+            _ui_timeout_cache = int(config["current_timeout"])
+        except (TypeError, ValueError):
+            pass
 
 def save_salt(salt, filename="bunker.salt"):
     _atomic_write_bytes(filename, salt)
@@ -888,37 +902,15 @@ def timeout_getpass(prompt, timeout):
         return result
 
 
-def fileSetup(hashed_pass):
-    """Setup and load encrypted files with enhanced security"""
-    try:
-        config = vault.manage_config(hashed_pass)
-        
-        # Get salt and verifier from config
-        salt = base64.b64decode(config["salt"])
-        verifier = base64.b64decode(config["verifier"])
-        
-        # Validate sizes
-        if len(salt) != SALT_SIZE:
-            raise ValueError(f"Invalid salt size: {len(salt)} bytes")
-        if len(verifier) < 20:
-            raise ValueError(f"Invalid verifier size: {len(verifier)} bytes")
-            
-        # Load database
-        database = loadDatabase(hashed_pass)
-        
-        return salt, verifier, database
-    except Exception as e:
-        print(f"{RED}** ALERT: Error loading security files: {str(e)} **{RESET}")
-        self_destruct()
-
 def saveDatabase(db, hashed_pass):
     """Save database with enhanced security"""
     try:
         db_bytes = json.dumps(db).encode('utf-8')
         encrypted_db = vault.encrypt_data(db_bytes, hashed_pass)
-        # Validate the encrypted blob BEFORE touching the existing database
-        if len(encrypted_db) < 100 and len(db) > 0:
-            raise ValueError(f"Encrypted database too small ({len(encrypted_db)} bytes)")
+        # Validate the encrypted blob BEFORE touching the existing database:
+        # it must decrypt back to exactly what we encrypted
+        if vault.decrypt_data(encrypted_db, hashed_pass) != db_bytes:
+            raise ValueError("Encrypted database failed round-trip verification")
         _atomic_write_bytes("Bunker.mmf", encrypted_db)
         if os.name == 'posix':
             os.chmod("Bunker.mmf", 0o600)
@@ -970,14 +962,6 @@ def loadDatabase(hashed_pass):
     except Exception as e:
         print(f"{RED}** ALERT: Failed to load database: {str(e)} **{RESET}")
         raise ValueError(f"Database format is invalid: {str(e)}")
-def load_max_attempts(hashed_pass):
-    """Load max attempts using manage_config"""
-    try:
-        config = vault.manage_config(hashed_pass)
-        return config.get("max_attempts", 3)
-    except Exception as e:
-        print(f"{GOLD}Warning: Could not load max attempts. Using default value.{RESET}")
-        return 3
 
 def setup_timeout() -> Optional[int]:
     """Configure timeout settings"""
@@ -1180,19 +1164,6 @@ def vaultSetup():
     finally:
         # Secure cleanup
         vault.secure_wipe()
-             
-def main():
-    """Main entry point"""
-    check_terminal_size()
-    clear_screen()
-    if not vaultSetup():
-        print(nuke_art)
-        print(nuke_text)
-        print(divider)
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
 
 
 def display_setup_guide():
@@ -1976,72 +1947,3 @@ def changeAutoLogoutTimer(hashed_pass, db):
         # Clean up sensitive data
         if 'hashed_pass' in locals(): del hashed_pass
         vault.secure_wipe()
-
-#debug fuction not connected not needed but good to have to clean db with out restarting setup
-def cleanupDatabase(hashed_pass, db):
-    """
-    Remove invalid entries from the database with enhanced security.
-    Handles both profile entries and note entries.
-    """
-    invalid_entries = []
-    cleaned = False
-    profile_count = 0
-    note_count = 0
-
-    for entry_id, info in db.items():
-        if not isinstance(info, dict):
-            # Not a dictionary, definitely invalid
-            invalid_entries.append(entry_id)
-            cleaned = True
-            continue
-            
-        # Check if this is a profile entry
-        if "password" in info and "domain" in info:
-            # This should be a profile entry
-            if (not isinstance(info.get("domain"), (str, bytes)) or
-                not isinstance(info.get("password"), (str, bytes)) or
-                "content" in info or  # Profiles shouldn't have content
-                "tags" in info):      # Profiles shouldn't have tags
-                invalid_entries.append(entry_id)
-                cleaned = True
-                profile_count += 1
-                
-        # Check if this is a note entry
-        elif "content" in info and "title" in info:
-            # This should be a note entry
-            if (not isinstance(info.get("title"), (str, bytes)) or
-                not isinstance(info.get("content"), (str, bytes)) or
-                "password" in info or  # Notes shouldn't have password
-                "domain" in info):     # Notes shouldn't have domain
-                invalid_entries.append(entry_id)
-                cleaned = True
-                note_count += 1
-                
-        else:
-            # Neither a valid profile nor a valid note
-            invalid_entries.append(entry_id)
-            cleaned = True
-
-    # Remove invalid entries
-    for entry_id in invalid_entries:
-        del db[entry_id]
-
-    # Save cleaned database
-    if cleaned:
-        try:
-            # Use enhanced security for encryption
-            encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-
-            # Write directly as bytes to ensure consistent format (atomic replace)
-            _atomic_write_bytes("Bunker.mmf", encrypted_db)
-
-            print(f"\n{GREEN}** Database cleaned up: Removed {len(invalid_entries)} invalid entries **{RESET}")
-            if profile_count > 0:
-                print(f"{GREEN}** {profile_count} invalid profile entries removed **{RESET}")
-            if note_count > 0:
-                print(f"{GREEN}** {note_count} invalid note entries removed **{RESET}")
-        except Exception as e:
-            print(f"{RED} ** ALERT: Failed to update database. Error: {str(e)} **{RESET}")
-            return None
-
-    return db

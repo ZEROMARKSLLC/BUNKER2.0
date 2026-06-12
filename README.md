@@ -7,19 +7,19 @@
 ---
 
 ## 🛡️ About BUNKER 2.0
-*Military-Grade Local Security Vault*
+*Local-First Encrypted Security Vault*
 
-BUNKER 2.0 is a locally-stored, offline password and notes manager built with privacy-first principles. Using **AES-256 encryption**, your data never leaves your device and is protected by military-grade cryptographic standards.
+BUNKER 2.0 is a locally-stored, offline password and notes manager built with privacy-first principles. Using **AES-256-GCM encryption with Argon2id key derivation**, your data never leaves your device and is protected by modern, industry-standard cryptography.
 
 https://youtu.be/DxMICmnFs_Y - DEMO VIDEO
 https://zeromarks.gumroad.com/l/vmnbz - GUMROAD
 
 **Key Features:**
-- **AES-256 Encryption** - Industry standard military-grade security
+- **AES-256-GCM Encryption** - Industry-standard authenticated encryption with Argon2id key derivation
 - **100% Local Storage** - No cloud, no tracking, no data mining (optional IP-display feature contacts public IP-lookup services; disable it in Settings for fully offline use)
 - **Self-Destruct Protection** - Multiple security triggers protect your vault
 - **Auto-Logout Timer** - Configurable inactivity protection
-- **Password Generator** - Create uncrackable passwords instantly
+- **Password Generator** - Create strong, random passwords instantly
 - **Encrypted Notes** - Secure storage for sensitive information
 - **IP Display Toggle** - Optional network monitoring
 - **Brute-Force Protection** - Failed attempt tracking with vault lockdown
@@ -79,18 +79,7 @@ Or install the packages explicitly:
 ```bash
 pip install inputimeout cryptography argon2-cffi pyperclip psutil requests
 ```
-**Important:** Make sure you're in the `BUNKER2.0` directory (showing `BUNKER2.0 %`) and not the home directory (`~ %`) for successful installation.
-
----
-
-## 🔧 Troubleshooting
-
-**Import Errors:**
-If you encounter import errors on first run, install missing packages:
-```bash
-pip install [missing_package_name]
-```
-
+**Note:** `pip install` works from any directory (just point it at the right `requirements.txt` path). Being in the `BUNKER2.0` directory (showing `BUNKER2.0 %`) matters for *running* the app, since BUNKER reads and writes its vault files there.
 
 ### Step 3: Launch BUNKER 2.0
 
@@ -106,17 +95,31 @@ To wipe everything and start fresh, delete the `Bunker.mmf`, `bunker.salt`, `bun
 
 ---
 
+## 🔧 Troubleshooting
+
+**Import Errors:**
+If you encounter import errors on first run, install missing packages:
+```bash
+pip install [missing_package_name]
+```
+
+**Other Issues:**
+If you experience different errors, please reach out through our social media channels for support.
+
+---
+
 ## 💻 Security Features
 
-**AES-256 Encryption:**
-- All passwords and notes encrypted with Advanced Encryption Standard
-- 256-bit key length provides military-grade security
+**AES-256-GCM Encryption:**
+- All passwords and notes encrypted with AES-256-GCM authenticated encryption
+- Keys derived with Argon2id (time_cost=3, 100 MB memory, parallelism=8) chained into PBKDF2-HMAC-SHA3-256 (110,000 iterations)
 - Master password never stored - validated through decryption challenge
 
 **Self-Destruct Mechanisms:**
 - Vault auto-deletion after maximum failed login attempts
 - File tampering detection with instant vault wipe
 - No recovery possible - intentional "burner vault" design
+- **Honest caveat:** an attacker with direct disk access can reset the attempt counter (stored in `config.cfg`), so treat self-destruct as best-effort — your vault's real security rests on master-password strength and the key derivation above.
 
 **Auto-Protection:**
 - Configurable timeout (5min/30min/1hr options)
@@ -135,12 +138,7 @@ Access the complete User Guide from the 🏚️ **MAIN MENU** 🏚️ for detail
 
 This application is built for **educational purposes**. Use BUNKER 2.0 at your own risk. It is provided as-is, and neither the creator nor contributors take responsibility for any damage or loss incurred through its use.
 
-**Security Note:** While BUNKER 2.0 uses industry-standard AES-256 encryption, always maintain proper backup practices for critical data.
-
-
-
-**Other Issues:**
-If you experience different errors, please reach out through our social media channels for support.
+**Security Note:** While BUNKER 2.0 uses industry-standard AES-256-GCM encryption, always maintain proper backup practices for critical data.
 
 ---
 
@@ -164,7 +162,7 @@ If you experience different errors, please reach out through our social media ch
 
 **Development Started:** May 10, 2024  
 **Version 2.0 Completed:** June 20, 2024  
-**Latest Update:** AES-256 Encryption Implementation
+**Latest Update:** AES-256-GCM Encryption + Argon2id/PBKDF2 Hybrid Key Derivation
 **gumroad** 06-15-25
 
 **Created by:** @RIX (ZeroMarks LLC Founder)
@@ -173,7 +171,7 @@ If you experience different errors, please reach out through our social media ch
 
 ## 🚀 Coming Soon
 
-- **ZeroMarks VPN** - No-logs VPN service (Q1 2025)
+- **ZeroMarks VPN** - No-logs VPN service (release date TBD)
 - **Crypto Wallet Manager** - Secure cryptocurrency key storage
 - **Enhanced Brute-Force Protection** - Advanced security improvements
 - **Mobile and tablet UI** - Detects Device and uses corresponding ui/ux

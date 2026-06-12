@@ -5,7 +5,7 @@ from main.INITIALIZE import  (vaultSetup, display_user_guide,
 timeoutInput, load_salt, loadDatabase, vault,changeMasterPassword,
 changeAutoLogoutTimer, MIN_PASSWORD_LENGTH,load_ui_config,
 MAX_PASSWORD_LENGTH, RECOMMENDED_PASSWORD_LENGTH, save_ui_config,
-timeout_getpass, timeoutCleanup, timeoutGlobalCode,
+timeout_getpass, timeoutCleanup, timeoutGlobalCode, get_effective_timeout,
 setup_secure_exit_handlers, secure_cleanup_common, interruptCleanup,
 verify_export_encryption, generate_export_encryption, saveDatabase )
 
@@ -48,23 +48,13 @@ def main():
             sys.exit(1)
 
         # Load salt and encrypted config
-        # Prompt for password
-        #entered_pass = timeoutInput("Enter your vault password to load your settings: ")
 
-        # Derive the key using the entered password and the salt
         salt = load_salt()  # Load your salt from file
-        #derived_key = vault.derive_key_hybrid(entered_pass, salt, entered_pass)
 
         # Decrypt the config using the derived key
         with open("bunker.cfg", "rb") as f:
             encrypted_config = f.read()
-        #config = json.loads(vault.decrypt_data(encrypted_config, derived_key).decode())
 
-        # Now you can access your settings
-        #attempts = config.get("attempts", 0)
-        #max_attempts = config.get("max_attempts", 3)
-        #disable_ipv4 = config["settings"].get("disable_ipv4", True)
-        #current_timeout = config.get("timeout_value", 60)
 
         # UI/UX: Loading animation and welcome
         check_terminal_size()
@@ -153,11 +143,6 @@ def main():
                 # Decrypt config
                 config = json.loads(vault.decrypt_data(encrypted_config, derived_key).decode())
                 
-                # Update values from config
-                #attempts = config.get("attempts", 0)
-                #max_attempts = config.get("max_attempts", 3)
-                #disable_ipv4 = config["settings"].get("disable_ipv4", True)
-                #current_timeout = config.get("timeout_value", 60)
                 
                 #temporarily store ui_config to update attempts
                 ui_config = load_ui_config()
@@ -186,12 +171,6 @@ def main():
                 ui_config["attempts"] = attempts
                 save_ui_config(ui_config)
                 
-                #config["attempts"] = attempts
-                
-                #encrypted_config = vault.encrypt_data(json.dumps(config).encode(), derived_key)
-                #with open("bunker.cfg", "wb") as f:
-                #    f.write(encrypted_config)
-                
                 hashed_pass = derived_key
                 break
             else:
@@ -210,12 +189,6 @@ def main():
                         PURPLE + f"Attempt 3 of 3 {RED} ** ALERT: Self-destructing after this attempt... **" + RESET
                     )
                 
-                # Save updated attempts to config if we have it
-                #if config:
-                    #config["attempts"] = attempts
-                #    encrypted_config = vault.encrypt_data(json.dumps(config).encode(), derived_key)
-                 #   with open("bunker.cfg", "wb") as f:
-                 #       f.write(encrypted_config)
                 
                 # Check if max attempts reached
                 if attempts >= max_attempts:
@@ -408,7 +381,7 @@ def displayTimeout():
     try:
         
         # Load timeout value with enhanced security
-        current_timeout = vault.load_timeout_value()
+        current_timeout = get_effective_timeout()
         
         if current_timeout is not None and current_timeout > 0:
             return f"{CYAN}Auto-Logout is: {GREEN}ON{RESET}"
@@ -486,48 +459,6 @@ def changeDisplayIp(hashed_pass, disable_ipv4):
                 save_ui_config(ui_config)
             except Exception as e:
                 print(f"{RED}** ALERT: Failed to save UI config: {str(e)} **{RESET}")
-
-                # Save settings to settings file
-             #   try:
-            #        settings_data = json.dumps({
-            #            "disable_ipv4": disable_ipv4,
-            #            "version": "2.0"
-            #        }).encode()
-                    
-            #        encrypted_settings = vault.encrypt_data(settings_data, key)
-                    
-                    # Write directly as bytes to ensure consistent format
-             #       with open("settings.enc", "wb") as settings_file:
-             #           settings_file.write(encrypted_settings)
-             #   except Exception as e:
-             #       print(f"{RED}** ALERT: Failed to save settings file: {str(e)} **{RESET}")
-                
-                # Update database if needed
-             #   try:
-                    # Ensure contents is bytes
-              #      if isinstance(contents, str):
-              #          contents = contents.encode()
-                        
-                    # Decrypt the database
-              #      decrypted_data = vault.decrypt_data(contents, hashed_pass)
-              #      db = json.loads(decrypted_data.decode("utf-8"))
-                    
-                    # If db has settings section, update it
-              #      if isinstance(db, dict) and "settings" in db:
-               #         db["settings"]["disable_ipv4"] = disable_ipv4
-                #        db["settings"]["last_modified"] = datetime.datetime.now().isoformat()
-                        
-                        # Encrypt the updated database
-                 #       encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                        
-                        # Write directly as bytes to ensure consistent format
-                 #       with open("Bunker.mmf", "wb") as f:
-                  #          f.write(encrypted_db)
-                #except Exception as e:
-                 #   print(f"{RED}** ALERT: Failed to update database settings: {str(e)} **{RESET}")
-                    
-           # except Exception as e:
-            #    print(f"{RED}** ALERT: Failed to save settings: {str(e)} **{RESET}")
 
             while True:
                 userContinue = timeoutInput(
@@ -1063,17 +994,6 @@ def decode_and_decrypt_tag(tag, hashed_pass):
         tag_bytes = tag
     return vault.decrypt_data(tag_bytes, hashed_pass).decode("utf-8")
 
-def decrypt_note(note, hashed_pass):
-    decrypted = {
-        'title': decode_and_decrypt('title', note, hashed_pass),
-        'content': decode_and_decrypt('content', note, hashed_pass),
-        'tags': [decode_and_decrypt_tag(tag, hashed_pass) for tag in note.get('tags', [])]
-    }
-    for field in ['favorite', 'private']:
-        if field in note:
-            decrypted[field] = note[field]
-    return decrypted
-
 # Profile Display
 def main_pwd_manager(hashed_pass, contents):
     """Main password manager interface with enhanced security but following original structure"""
@@ -1176,7 +1096,7 @@ def main_pwd_manager(hashed_pass, contents):
 def addProfile(hashed_pass, db):
     """Add a new profile with enhanced security and robust input validation"""
     try:
-        current_timeout = vault.manage_config(hashed_pass)["timeout_value"]
+        current_timeout = get_effective_timeout()
         while True:
             clear_screen()
             displayHeader(f"{CYAN}✏️  ADD A PROFILE{RESET}")
@@ -1509,7 +1429,7 @@ def editProfileData(hashed_pass, db):
     """Edit profile data with enhanced security"""
     try:
         # Define current_timeout here to avoid undefined variable errors.
-        current_timeout = vault.manage_config(hashed_pass)["timeout_value"]
+        current_timeout = get_effective_timeout()
         
         while True:
             clear_screen()
@@ -3612,7 +3532,7 @@ def exportNotes(hashed_pass, db):
         verifier = None
         generated_passphrase = None
         if export_encrypted:
-            timeout = vault.manage_config(hashed_pass).get("timeout_value", 60)
+            timeout = get_effective_timeout()
             while True:
                 show_password = timeoutInput(
                     f"{GOLD}Do you want to see the password as you type? (y/n) (type (.c) to cancel): {RESET}"
@@ -3834,7 +3754,7 @@ def importNotes(hashed_pass, db):
                     if show_password in ["y", "n"]:
                         break
                     print(f"{RED} ** ALERT: Please enter 'y' or 'n'. **{RESET}")
-                timeout = vault.manage_config(hashed_pass).get("timeout_value", 60)
+                timeout = get_effective_timeout()
                 while True:
                     if show_password == "n":
                         passphrase = timeout_getpass(f"{GOLD}Enter the passphrase used for encryption(type (.c) to cancel): {RESET}", timeout)
@@ -4147,8 +4067,7 @@ def exportProfiles(hashed_pass, db):
     
         if export_encrypted:
             #temp
-            timeout = vault.manage_config(hashed_pass).get("timeout_value", 60)
-            #timeout = vault.manage_config(hashed_pass)["timeout_value"]  # Get the timeout value
+            timeout = get_effective_timeout()
             while True:
                 show_password = timeoutInput(
                     f"{GOLD}Do you want to see the password as you type? (y/n) (type (.c) to cancel): {RESET}"
@@ -4429,7 +4348,7 @@ def importProfiles(hashed_pass, db):
                     if show_password in ["y", "n"]:
                         break
                     print(f"{RED} ** ALERT: Please enter 'y' or 'n'. **{RESET}")
-                timeout = vault.manage_config(hashed_pass).get("timeout_value", 60)
+                timeout = get_effective_timeout()
                 while True:
                     if show_password == "n":
                         passphrase = timeout_getpass(f"{GOLD}Enter the passphrase used for encryption (type (.c) to cancel): {RESET}", timeout)
