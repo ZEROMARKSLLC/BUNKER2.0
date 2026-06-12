@@ -6,6 +6,7 @@ timeoutInput, load_salt, loadDatabase, vault,changeMasterPassword,
 changeAutoLogoutTimer, MIN_PASSWORD_LENGTH,load_ui_config,
 MAX_PASSWORD_LENGTH, RECOMMENDED_PASSWORD_LENGTH, save_ui_config,
 timeout_getpass, overwrite_db, timeoutCleanup, timeoutGlobalCode,
+derive_candidate_keys,
 setup_secure_exit_handlers, secure_cleanup_common, interruptCleanup,
 verify_export_encryption, generate_export_encryption, saveDatabase )
 
@@ -145,14 +146,22 @@ def main():
                 timedOut = True
                 break
 
-            # Derive key using entered password
-            derived_key = vault.derive_key_hybrid(entered_pass, salt, entered_pass)
             # Try to decrypt config and verify password
             login_successful = False
-            
+
             try:
-                # Decrypt config
-                config = json.loads(vault.decrypt_data(encrypted_config, derived_key).decode())
+                # Decrypt config with whichever key-derivation scheme matches
+                # (current scheme first, then the legacy scheme so vaults
+                # created before the pepper fix keep opening)
+                config = None
+                for derived_key in derive_candidate_keys(entered_pass, salt):
+                    try:
+                        config = json.loads(vault.decrypt_data(encrypted_config, derived_key).decode())
+                        break
+                    except Exception:
+                        continue
+                if config is None:
+                    raise ValueError("incorrect access password")
                 
                 # Update values from config
                 #attempts = config.get("attempts", 0)

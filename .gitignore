@@ -1,2 +1,15 @@
 __pycache__/
 *.pyc
+
+# Machine-local secrets and runtime artifacts — never commit
+bunker.devkey
+*.bak
+*.bak.*
+.vault_config
+
+# OS / editor cruft
+.DS_Store
+.vscode/
+
+# Raw screenshot originals (commit only the optimized copies in docs/img/)
+docs/img/raw/

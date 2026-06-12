@@ -193,16 +193,19 @@ class SecureVaultEnhanced:
             raise ValueError(f"Failed to load {filename}: {str(e)}") 
     
     def verify_password_enhanced(self, password, salt, verifier):
-        """Verify password using config data"""
-        try:
-            key = self.derive_key_hybrid(password, salt, password)
-            decrypted = self.decrypt_data(verifier, key)
-            
-            if decrypted == b"BUNKER_VERIFIED":
-                return key
-            return False
-        except Exception:
-            return False
+        """Verify password using config data.
+
+        Tries the current scheme (password + PEPPER) first, then the
+        legacy scheme (password + password) used by vaults created before
+        the pepper fix, so existing vaults keep opening."""
+        for pepper in (PEPPER, password):
+            try:
+                key = self.derive_key_hybrid(password, salt, pepper)
+                if self.decrypt_data(verifier, key) == b"BUNKER_VERIFIED":
+                    return key
+            except Exception:
+                continue
+        return False
         
     def secure_save(self, filename: str, data: bytes, key: bytes):
         """Securely save encrypted data with consistent format"""
@@ -229,9 +232,10 @@ class SecureVaultEnhanced:
     def secure_delete_on_failure(self):
         """Securely delete all sensitive files"""
         sensitive_files = [
-            self.config_file,  
+            self.config_file,
             self.database_file,
             self.salt_file,
+            "bunker.devkey",
         ]
         
         try:
@@ -603,7 +607,38 @@ def timeoutInput(caption, timeout=60, hashed_pass=None):
     return user_input
 
 
-PEPPER = os.environ.get("BUNKER_PEPPER", "default_pepper_value")
+# Optional secret pepper for key derivation. Empty by default (a pepper only
+# helps if it is a real secret independent of the password). Vaults created
+# before this fix derived keys with the password concatenated to itself; the
+# LEGACY scheme below keeps those vaults opening.
+PEPPER = os.environ.get("BUNKER_PEPPER", "")
+
+def derive_candidate_keys(password, salt):
+    """Derive the current-scheme key, plus the legacy (password-as-pepper)
+    key used by vaults created before the pepper fix. Try in order."""
+    keys = [vault.derive_key_hybrid(password, salt, PEPPER)]
+    legacy = vault.derive_key_hybrid(password, salt, password)
+    if legacy != keys[0]:
+        keys.append(legacy)
+    return keys
+
+# Machine-local key for the pre-auth UI config (attempt counter, timeout).
+# Not secret-grade — an attacker with filesystem access already has the
+# encrypted vault — but unlike the old hardcoded key it cannot be forged
+# by anyone who merely read this source code.
+DEVKEY_FILE = "bunker.devkey"
+LEGACY_UI_KEY = b"0" * 32
+
+def _ui_config_key():
+    try:
+        with open(DEVKEY_FILE, "rb") as f:
+            secret = f.read()
+        if len(secret) != 32:
+            raise ValueError("invalid device key length")
+    except Exception:
+        secret = os.urandom(32)
+        _atomic_write(DEVKEY_FILE, secret, keep_backup=False)
+    return base64.urlsafe_b64encode(secret)
 
 DEFAULT_UI_CONFIG = {
     "attempts": 0,
@@ -613,15 +648,25 @@ DEFAULT_UI_CONFIG = {
 }
 
 def load_ui_config(hashed_pass=None):
+    key = hashed_pass or _ui_config_key()
     try:
-        key = hashed_pass or b"0"*32  # Replace with a real key if possible
         with open("config.cfg", "rb") as f:
             encrypted = f.read()
-        decrypted = vault.decrypt_data(encrypted, key)
-        return json.loads(decrypted.decode("utf-8"))
     except FileNotFoundError:
         # First run / tidied-up file: rebuild defaults, never destroy the vault
         config = dict(DEFAULT_UI_CONFIG)
+        save_ui_config(config, hashed_pass)
+        return config
+    try:
+        decrypted = vault.decrypt_data(encrypted, key)
+        return json.loads(decrypted.decode("utf-8"))
+    except Exception:
+        pass
+    # One-time migration: configs written before the device-key fix were
+    # encrypted under a static key; re-encrypt under this machine's key
+    try:
+        decrypted = vault.decrypt_data(encrypted, LEGACY_UI_KEY)
+        config = json.loads(decrypted.decode("utf-8"))
         save_ui_config(config, hashed_pass)
         return config
     except Exception:
@@ -632,8 +677,7 @@ def load_ui_config(hashed_pass=None):
         sys.exit(1)
     
 def save_ui_config(config, hashed_pass=None):
-    # If you have the password/key, use it; otherwise, use a static key for now
-    key = hashed_pass or b"0"*32  # Replace with a real key if possible
+    key = hashed_pass or _ui_config_key()
     data = json.dumps(config).encode("utf-8")
     encrypted = vault.encrypt_data(data, key)
     _atomic_write("config.cfg", encrypted)
@@ -1154,8 +1198,7 @@ def vaultSetup():
             created_files.append("bunker.salt")
 
             # Derive key using password + salt (+ optional pepper)
-            pepper = os.environ.get("BUNKER_PEPPER", "")
-            derived_key = vault.derive_key_hybrid(password_provided, salt, password_provided)
+            derived_key = vault.derive_key_hybrid(password_provided, salt, PEPPER)
             # Setup timeout with cancel option
             timeout_value = setup_timeout()
             if timeout_value is None:
@@ -1739,8 +1782,8 @@ def changeMasterPassword(hashed_pass, db):
 
             try:
                 # Derive key and check if it matches existing password
-                derived_key = vault.derive_key_hybrid(password_provided, current_salt)
-                if derived_key == hashed_pass:
+                # (check both the current and the legacy derivation scheme)
+                if hashed_pass in derive_candidate_keys(password_provided, current_salt):
                     print(f"{RED}\n ** ALERT: New password cannot be the same as the current password. **{RESET}")
                     while True:
                         retry_choice = timeoutInput(
@@ -1761,7 +1804,7 @@ def changeMasterPassword(hashed_pass, db):
             try:
             # Generate new salt and key
                 new_salt = os.urandom(SALT_SIZE)
-                new_derived_key = vault.derive_key_hybrid(password_provided, new_salt, password_provided)
+                new_derived_key = vault.derive_key_hybrid(password_provided, new_salt, PEPPER)
                 #tempar
                 #new_config = {
                 #    "salt": base64.b64encode(new_salt).decode(),

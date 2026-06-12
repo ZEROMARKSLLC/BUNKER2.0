@@ -477,6 +477,7 @@ def self_destruct(reason="unspecified", force=False):
         "bunker.salt",     
         "config.cfg",
         ".vault_config",
+        "bunker.devkey",
         "*.bak",
         "*.bak.*"
 
