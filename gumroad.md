@@ -10,7 +10,7 @@ BUNKER 2.0: Your Digital Fortress (Terminal Edition) Price: FREE! $0 OR PAY WHAT
 
 (AKA "The Only Password Manager That Doesn’t Sell Your Data to Corporate")
 
-Price: FREE! $0 OR PAY WHAT YOU WANT! (Open Source, But Low-Key Funding My Company's Dream 👀)
+Price: FREE! $0 OR PAY WHAT YOU WANT! (Source-Available, But Low-Key Funding My Company's Dream 👀)
 👉 "SHUT UP AND TAKE MY MONEY[KickStarter Coming Soon]" | 🔍 "LET ME SEE THAT DEMO FIRST [YouTube]"
 
 🔥 - WHY THIS SLAPS
@@ -37,7 +37,8 @@ Think of this as your chance to "invest" in a startup… except you actually get
 
 🛠️ WHAT’S IN THE BOX?
 
-BUNKER.py (The main script—flex your Python skills)
+BUNKER.py + the main/ folder (the script needs both — keep them together)
+requirements.txt (one pip command installs everything)
 README.md (Instructions so easy, even your non-techy friend could follow)
 Demo password: rootroot (Change this ASAP unless you wanna get hacked)
 
@@ -59,7 +60,7 @@ Download Python 3 (python.org)
 
 Run one command:bash
 
-pip install cryptography pyperclip psutil requests && python3 BUNKER.py
+pip install -r requirements.txt && python3 BUNKER.py
 
 
 
@@ -79,7 +80,7 @@ Socials: Twitter | TikTok
 
 🎤 FINAL WORD
 
-BUNKER 2.0 is open source, so you can tweak it yourself maybe even request for a feature… but buying it helps me build:
+BUNKER 2.0 is source-available (personal-use license — see LICENSE.txt), so you can read every line, tweak it for yourself, maybe even request a feature… but buying it helps me build:
 
 A zero-logs VPN
 Eco-friendly web hosting

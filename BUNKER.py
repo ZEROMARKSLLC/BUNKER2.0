@@ -148,6 +148,8 @@ def main():
 
             # Try to decrypt config and verify password
             login_successful = False
+            used_bak_salt = False
+            recovered_salt = None
 
             try:
                 # Decrypt config with whichever key-derivation scheme matches
@@ -173,6 +175,8 @@ def main():
                         for derived_key in derive_candidate_keys(entered_pass, bak_salt):
                             try:
                                 config = json.loads(vault.decrypt_data(encrypted_config, derived_key).decode())
+                                used_bak_salt = True
+                                recovered_salt = bak_salt
                                 print(f"{GOLD}** Recovered using the backup salt after an "
                                       f"interrupted password change. If the vault fails to "
                                       f"open, restore Bunker.mmf.bak as Bunker.mmf. **{RESET}")
@@ -215,6 +219,22 @@ def main():
                 print(f"{RED} ** ALERT: Incorrect access password. Try again. **{RESET}")
 
             if login_successful:
+                if used_bak_salt and recovered_salt:
+                    # Repair the on-disk state: bunker.salt was orphaned by an
+                    # interrupted password change. Restore the salt that
+                    # matches bunker.cfg and drop the now-stale .bak —
+                    # otherwise every login depends on the .bak forever, and
+                    # a second crashed rotation would leave the matching salt
+                    # existing nowhere on disk.
+                    try:
+                        save_salt(recovered_salt)
+                        if os.path.exists("bunker.salt.bak"):
+                            os.remove("bunker.salt.bak")
+                        print(f"{GREEN}** Vault state repaired after the interrupted password change. "
+                              f"Your password was NOT changed — use this password from now on. **{RESET}")
+                    except Exception as repair_err:
+                        print(f"{GOLD}** Warning: could not repair bunker.salt ({repair_err}). "
+                              f"Keep bunker.salt.bak safe and retry. **{RESET}")
                 # Reset attempts on successful login
                 attempts = 0
                 #temporarily store ui_config to update attempts
@@ -230,6 +250,23 @@ def main():
                 hashed_pass = derived_key
                 break
             else:
+                # An interrupted password change leaves a new salt with the
+                # old config on disk; the user's NEW password then fails
+                # through no fault of their own. Don't count those failures
+                # toward the wipe — the .bak salt mismatch identifies the
+                # state, and the lockout still applies once it is repaired.
+                rotation_interrupted = False
+                try:
+                    if os.path.exists("bunker.salt.bak") and load_salt("bunker.salt.bak") != salt:
+                        rotation_interrupted = True
+                except Exception:
+                    pass
+                if rotation_interrupted:
+                    print(f"{GOLD}** An interrupted password change was detected — this attempt "
+                          f"was NOT counted toward the lockout. Your password change did not "
+                          f"complete: log in with your PREVIOUS password to repair the vault. **{RESET}")
+                    continue
+
                 # Increment attempts and update config if we have it
                 attempts += 1
                 #temporarily store ui_config to update attempts
@@ -363,24 +400,32 @@ def manage_passwords_and_notes(hashed_pass):
 
             # Menu options
             if user_cmd == "a":
-                # Get the latest database before passing to manager
+                # Get the latest database before passing to manager. On a
+                # read failure, return to the menu — running the manager on
+                # the login-time snapshot would silently roll back any saves
+                # made since login the next time it writes.
                 try:
                     with open("Bunker.mmf", "rb") as f:
                         latest_contents = f.read()
-                    timedOut = main_pwd_manager(hashed_pass, latest_contents)
                 except Exception as e:
                     print(f"{RED}** ALERT: Failed to read latest database: {str(e)} **{RESET}")
-                    timedOut = main_pwd_manager(hashed_pass, contents)
+                    input(f"{GOLD}Press ENTER to return to the menu...{RESET}")
+                    continue
+                timedOut = main_pwd_manager(hashed_pass, latest_contents)
 
             elif user_cmd == "s":
-                # Get the latest database before passing to manager
+                # Get the latest database before passing to manager. On a
+                # read failure, return to the menu — running the manager on
+                # the login-time snapshot would silently roll back any saves
+                # made since login the next time it writes.
                 try:
                     with open("Bunker.mmf", "rb") as f:
                         latest_contents = f.read()
-                    timedOut = main_note_manager(hashed_pass, latest_contents)
                 except Exception as e:
                     print(f"{RED}** ALERT: Failed to read latest database: {str(e)} **{RESET}")
-                    timedOut = main_note_manager(hashed_pass, contents)
+                    input(f"{GOLD}Press ENTER to return to the menu...{RESET}")
+                    continue
+                timedOut = main_note_manager(hashed_pass, latest_contents)
 
             elif user_cmd == "d":
                 timedOut = changeDisplayIp(hashed_pass, disable_ipv4)

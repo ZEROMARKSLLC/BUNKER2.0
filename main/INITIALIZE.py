@@ -1258,9 +1258,6 @@ def main():
         print(divider)
         sys.exit(1)
 
-if __name__ == "__main__":
-    main()
-
 
 def display_setup_guide():
     """Display a simplified user guide during setup phase"""
@@ -1799,20 +1796,49 @@ def changeMasterPassword(hashed_pass, db):
                 config["timestamp"] = str(time.time())
 
                 
-                # Re-encrypt the database under the new key FIRST. If this
-                # fails, nothing else has been published and the old
-                # password still works. (saveDatabase verifies the
-                # ciphertext round-trips before replacing the file, and
-                # every write below keeps a .bak of the previous version.)
-                if not saveDatabase(db, new_derived_key):
-                    raise ValueError("Could not re-encrypt the database — password NOT changed")
+                # Snapshot the live files so ANY exception below restores the
+                # vault to its pre-rotation state immediately. The .bak files
+                # still cover hard crashes; this rollback covers plain errors
+                # without making the user go through login-time recovery.
+                pre_rotation = {}
+                for live in ("Bunker.mmf", "bunker.cfg", "bunker.salt"):
+                    if os.path.exists(live):
+                        with open(live, "rb") as f:
+                            pre_rotation[live] = f.read()
 
-                # Publish new salt and config
-                save_salt(new_salt)
+                try:
+                    # Re-encrypt the database under the new key FIRST. If this
+                    # fails, nothing else has been published and the old
+                    # password still works. (saveDatabase verifies the
+                    # ciphertext round-trips before replacing the file, and
+                    # every write below keeps a .bak of the previous version.)
+                    if not saveDatabase(db, new_derived_key):
+                        raise ValueError("Could not re-encrypt the database — password NOT changed")
 
-                # Encrypt and save config with new key
-                encrypted_config = vault.encrypt_data(json.dumps(config).encode(), new_derived_key)
-                _atomic_write("bunker.cfg", encrypted_config)
+                    # Publish new salt and config
+                    save_salt(new_salt)
+
+                    # Encrypt and save config with new key
+                    encrypted_config = vault.encrypt_data(json.dumps(config).encode(), new_derived_key)
+                    _atomic_write("bunker.cfg", encrypted_config)
+                except Exception:
+                    for live, old_bytes in pre_rotation.items():
+                        try:
+                            _atomic_write(live, old_bytes, keep_backup=False)
+                        except Exception:
+                            pass
+                    raise
+
+                # Rotation complete. The .bak files still hold copies
+                # encrypted under the OLD password — remove them so a
+                # compromised old password cannot decrypt the backups (the
+                # next routine save recreates fresh ones under the new key).
+                for stale in ("Bunker.mmf.bak", "bunker.cfg.bak", "bunker.salt.bak"):
+                    try:
+                        if os.path.exists(stale):
+                            os.remove(stale)
+                    except OSError:
+                        pass
 
                 # Reset the attempt counter but PRESERVE the user's settings
                 # (timeout, IP toggle) — they live in the UI config, not in
@@ -2011,3 +2037,9 @@ def changeAutoLogoutTimer(hashed_pass, db):
         if 'hashed_pass' in locals(): del hashed_pass
         vault.secure_wipe()
 
+
+
+# Kept at end of file so every function above is defined before main() runs
+# when this module is executed directly.
+if __name__ == "__main__":
+    main()

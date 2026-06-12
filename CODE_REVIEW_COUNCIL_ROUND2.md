@@ -72,6 +72,10 @@ The README redesign exists only as `docs/README.draft.md`; nothing ships it. The
 
 ---
 
+## Resolution (2026-06-12, this branch)
+
+Steps 1–3 of the merge sequence below were implemented on `claude/code-review-council-7s0d1i` immediately after this report: `mobile-version-check-3p4gat` was merged in (its code superseding our P0 commits), all three blockers were fixed, both deltas ported (plus the `__main__`-guard move and post-rotation `.bak` shredding), and the two recommended tests added (`tests/test_rotation_recovery.py`). The five unfixed feature bugs from Round 1 remain open as the next work package.
+
 ## Recommended merge sequence
 
 1. On `mobile-version-check-3p4gat`: fix Blockers 1–3 (exclude `*.bak` from the wipe + interrupted-rotation detection; salt repair after `.bak` login; promote/patch the shipped docs).

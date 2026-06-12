@@ -476,19 +476,18 @@ def self_destruct(reason="unspecified", force=False):
         sys.exit(1)
     # Updated list of sensitive files
     sensitive_files = [
-        "Bunker.mmf", 
-        "bunker.cfg", 
-        "bunker.salt",     
+        "Bunker.mmf",
+        "bunker.cfg",
+        "bunker.salt",
         "config.cfg",
         ".vault_config",
         "bunker.devkey",
-        # Only OUR backups — never glob a bare *.bak, which would shred
-        # unrelated files in whatever directory BUNKER was launched from
-        "Bunker.mmf.bak*",
-        "bunker.cfg.bak*",
-        "bunker.salt.bak*",
-        "config.cfg.bak*",
-
+        # The .bak recovery files are deliberately NOT wiped. The lockout
+        # only deters casual online guessing — an attacker with file access
+        # copies everything before guessing, so wiping .baks adds nothing —
+        # while a legitimate user whose password change crashed mid-rotation
+        # NEEDS the .baks to recover. Wiping them turned three mistyped
+        # logins after a crash into total, unrecoverable data loss.
     ]
     
     print(f"{GOLD}Self-destruct initiated. Searching for sensitive files...{RESET}")

@@ -64,15 +64,15 @@ cd ~/Desktop/BUNKER2.0
 
 **Required Dependencies:**
 - `inputimeout` - Timeout handling for secure input
-- `keyboard` - Keyboard event detection
 - `cryptography` - **AES-256 encryption library**
+- `argon2-cffi` - Argon2id key derivation
 - `pyperclip` - Secure clipboard management
 - `psutil` - System information monitoring
 - `requests` - Network utilities
 
 **Installation Command:**
 ```bash
-pip install inputimeout keyboard cryptography pyperclip psutil requests argon2-cffi
+pip install -r requirements.txt
 ```
 **Important:** Make sure you're in the `BUNKER2.0` directory (showing `BUNKER2.0 %`) and not the home directory (`~ %`) for successful installation.
 
@@ -90,16 +90,21 @@ pip install [missing_package_name]
 ### Step 3: Launch BUNKER 2.0
 
 **For New Vault Setup:**
-Delete the `BUNKER.mmf` file from the BUNKER2.0 folder, then run:
+Delete the `Bunker.mmf` file from the BUNKER2.0 folder, then run:
 ```bash
 python3 BUNKER.py
 ```
 
 **For Demo Mode:**
-Keep the existing `BUNKER.mmf` file and run:
+Keep the existing `Bunker.mmf` file and run:
 ```bash
 python3 BUNKER.py
 ```
+
+> ⚠️ **Upgrading from an older BUNKER version?** After running this version
+> once, never launch the OLD version against the same vault folder again —
+> older builds treat the upgraded settings file as corruption and can wipe
+> the vault. Back up your vault folder before upgrading.
 
 ---
 
