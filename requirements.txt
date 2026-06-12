@@ -5,5 +5,5 @@ inputimeout>=1.0.4
 pyperclip>=1.8.2
 psutil>=5.9.0
 requests>=2.32.0
-# Note: 'keyboard' is intentionally NOT listed — it is an unused import and
-# requires root on Linux. Remove the `import keyboard as kb` line in BUNKER.py.
+# Note: 'keyboard' is intentionally NOT listed — it was an unused import
+# (removed from BUNKER.py) and requires root on Linux.

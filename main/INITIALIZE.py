@@ -551,9 +551,11 @@ def timeoutInput(caption, timeout=None, hashed_pass=None):
     if timeout is None:
         try:
             timeout = load_ui_config().get("current_timeout", 60)
-        except SystemExit:
-            raise
-        except Exception:
+        except BaseException:
+            # A mid-session config problem must not kill the app at some
+            # arbitrary prompt (losing in-flight input); fall back to the
+            # default — the login path's own config read still enforces
+            # the lock on next launch.
             timeout = 60
     if timeout is None or timeout <= 0:
         return input(caption)
@@ -595,11 +597,15 @@ def _ui_config_key():
     try:
         with open(DEVKEY_FILE, "rb") as f:
             secret = f.read()
-        if len(secret) != 32:
-            raise ValueError("invalid device key length")
-    except Exception:
+    except FileNotFoundError:
+        # First run only. A transient read error (permissions, I/O) must NOT
+        # silently mint a new key — that would orphan the existing config.
         secret = os.urandom(32)
-        _atomic_write(DEVKEY_FILE, secret, keep_backup=False)
+        _atomic_write(DEVKEY_FILE, secret)
+    if len(secret) != 32:
+        raise ValueError("bunker.devkey is damaged (wrong length); "
+                         "restore it from backup or delete it AND config.cfg "
+                         "to regenerate defaults")
     return base64.urlsafe_b64encode(secret)
 
 DEFAULT_UI_CONFIG = {
@@ -610,6 +616,11 @@ DEFAULT_UI_CONFIG = {
 }
 
 def load_ui_config(hashed_pass=None):
+    # The legacy static-key migration is only honored on the very first run
+    # (before this machine has a device key). Afterwards a static-key
+    # config.cfg is treated as the forgery it would be — otherwise anyone who
+    # read the source could reset the lockout counter forever.
+    first_run = not os.path.exists(DEVKEY_FILE)
     key = hashed_pass or _ui_config_key()
     try:
         with open("config.cfg", "rb") as f:
@@ -624,19 +635,21 @@ def load_ui_config(hashed_pass=None):
         return json.loads(decrypted.decode("utf-8"))
     except Exception:
         pass
-    # One-time migration: configs written before the device-key fix were
-    # encrypted under a static key; re-encrypt under this machine's key
-    try:
-        decrypted = vault.decrypt_data(encrypted, LEGACY_UI_KEY)
-        config = json.loads(decrypted.decode("utf-8"))
-        save_ui_config(config, hashed_pass)
-        return config
-    except Exception:
-        # Corrupt settings file: lock the session but PRESERVE the vault
-        print(f"{RED}** ALERT: The settings file (config.cfg) is unreadable. **{RESET}")
-        print(f"{GOLD}Vault locked — your data was NOT deleted. Restore config.cfg "
-              f"from a backup (config.cfg.bak) or delete it to regenerate defaults.{RESET}")
-        sys.exit(1)
+    if first_run:
+        # One-time migration: configs written before the device-key fix were
+        # encrypted under a static key; re-encrypt under this machine's key
+        try:
+            decrypted = vault.decrypt_data(encrypted, LEGACY_UI_KEY)
+            config = json.loads(decrypted.decode("utf-8"))
+            save_ui_config(config, hashed_pass)
+            return config
+        except Exception:
+            pass
+    # Corrupt (or forged) settings file: lock the session but PRESERVE the vault
+    print(f"{RED}** ALERT: The settings file (config.cfg) is unreadable. **{RESET}")
+    print(f"{GOLD}Vault locked — your data was NOT deleted. Restore config.cfg "
+          f"from a backup (config.cfg.bak) or delete it to regenerate defaults.{RESET}")
+    sys.exit(1)
     
 def save_ui_config(config, hashed_pass=None):
     key = hashed_pass or _ui_config_key()
@@ -925,13 +938,21 @@ def _atomic_write(path, data, keep_backup=True):
         if keep_backup and os.path.exists(path):
             bfd, bak_tmp = tempfile.mkstemp(prefix=base + ".bak.", suffix=".tmp",
                                             dir=directory)
-            with os.fdopen(bfd, "wb") as bf, open(path, "rb") as src:
-                bf.write(src.read())
-                bf.flush()
-                os.fsync(bf.fileno())
-            if os.name == "posix":
-                os.chmod(bak_tmp, 0o600)
-            os.replace(bak_tmp, path + ".bak")
+            try:
+                with os.fdopen(bfd, "wb") as bf, open(path, "rb") as src:
+                    bf.write(src.read())
+                    bf.flush()
+                    os.fsync(bf.fileno())
+                if os.name == "posix":
+                    os.chmod(bak_tmp, 0o600)
+                os.replace(bak_tmp, path + ".bak")
+                bak_tmp = None
+            finally:
+                if bak_tmp is not None:
+                    try:
+                        os.unlink(bak_tmp)
+                    except OSError:
+                        pass
 
         os.replace(tmp, path)
         tmp = None
@@ -949,10 +970,15 @@ def _atomic_write(path, data, keep_backup=True):
                 pass
 
 def _remove_files(paths):
-    """Best-effort removal of files created during an aborted setup run."""
+    """Best-effort rollback of files created during an aborted setup run.
+    If a write overwrote a pre-existing file, its .bak holds the previous
+    version — restore it instead of deleting outright."""
     for fname in paths or []:
         try:
-            os.remove(fname)
+            if os.path.exists(fname + ".bak"):
+                os.replace(fname + ".bak", fname)
+            else:
+                os.remove(fname)
         except OSError:
             pass
 
@@ -965,14 +991,6 @@ def saveDatabase(db, hashed_pass):
         if vault.decrypt_data(encrypted_db, hashed_pass) != db_bytes:
             raise ValueError("Pre-save verification failed: ciphertext does not round-trip")
         _atomic_write("Bunker.mmf", encrypted_db)
-        # Only update config if it loads successfully
-        try:
-            vault.manage_config(
-                hashed_pass,
-                last_modified=str(datetime.datetime.now().timestamp())
-            )
-        except Exception as e:
-            print(f"{GOLD}Warning: Could not update config last_modified: {str(e)}{RESET}")
         return True
     except Exception as e:
         print(f"{RED}** ALERT: Failed to save database: {str(e)} **{RESET}")
@@ -1796,18 +1814,17 @@ def changeMasterPassword(hashed_pass, db):
                 encrypted_config = vault.encrypt_data(json.dumps(config).encode(), new_derived_key)
                 _atomic_write("bunker.cfg", encrypted_config)
 
-                # Update and save UI config
-                ui_config = {
-                    "attempts": 0,
-                    "max_attempts": config.get("max_attempts", 3),
-                    "disable_ipv4": config.get("settings", {}).get("disable_ipv4", True),
-                    "current_timeout": config.get("timeout_value", 60)
-                }
+                # Reset the attempt counter but PRESERVE the user's settings
+                # (timeout, IP toggle) — they live in the UI config, not in
+                # bunker.cfg, so rebuild from the UI config itself
+                ui_config = load_ui_config()
+                ui_config["attempts"] = 0
                 save_ui_config(ui_config)
 
                 print(f"{GREEN}\n ** SUCCESS: Master password changed successfully! Log in again to access the note manager. **{RESET}")
                 timeoutInput(f"\n{GOLD}Press 'enter' to logout...{RESET}")
                 clear_screen()
+                secure_cleanup_common()  # clears the clipboard on logout
                 sys.exit()
 
             except KeyError as ke:

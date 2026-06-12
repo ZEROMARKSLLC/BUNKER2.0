@@ -94,32 +94,42 @@ check("old vault intact after kill-mid-save", open("Bunker.mmf", "rb").read() ==
 check("old vault still decrypts", INIT.loadDatabase(key) == db2)
 
 # 8. Security round: device-bound UI-config key
+import subprocess as sp
 for f in ("config.cfg", "bunker.devkey"):
     if os.path.exists(f):
         os.remove(f)
-cfg = INIT.load_ui_config()                      # regenerates defaults
-check("devkey created on first config write", os.path.exists("bunker.devkey"))
-check("config readable under device key", INIT.load_ui_config()["max_attempts"] == 3)
-
-# Forge attempt with the old static key must NOT be readable as valid config
-forged = INIT.vault.encrypt_data(json.dumps({"attempts": 0}).encode(), INIT.LEGACY_UI_KEY)
+# A pre-upgrade user: legacy static-key config exists BEFORE any devkey —
+# the one-time migration must adopt it
+legacy_cfg = INIT.vault.encrypt_data(json.dumps({"attempts": 0}).encode(), INIT.LEGACY_UI_KEY)
 with open("config.cfg", "wb") as f:
-    f.write(forged)
-# ...but a LEGACY config (pre-upgrade user) must migrate to the device key
+    f.write(legacy_cfg)
 migrated = INIT.load_ui_config()
-check("legacy config migrates", migrated == {"attempts": 0})
+check("legacy config migrates on first run", migrated == {"attempts": 0})
+check("devkey created during migration", os.path.exists("bunker.devkey"))
 with open("config.cfg", "rb") as f:
     on_disk = f.read()
 devkey = INIT._ui_config_key()
 check("migrated config now under device key",
       json.loads(INIT.vault.decrypt_data(on_disk, devkey)) == {"attempts": 0})
-# After migration, a fresh static-key forgery is re-migrated (attacker with
-# source-only knowledge gains nothing once devkey exists and differs), and a
-# config encrypted under a DIFFERENT machine's devkey is rejected
+check("config readable under device key",
+      INIT.load_ui_config() == {"attempts": 0})
+
+# Once the devkey exists, a static-key FORGERY (attacker resetting the
+# lockout counter from source knowledge) must be rejected, not migrated
+forged = INIT.vault.encrypt_data(json.dumps({"attempts": 0, "max_attempts": 9999}).encode(),
+                                 INIT.LEGACY_UI_KEY)
+with open("config.cfg", "wb") as f:
+    f.write(forged)
+r = sp.run([sys.executable, "-c",
+            "import sys, os; sys.path.insert(0, os.getcwd());"
+            "import main.INITIALIZE as I; I.load_ui_config()"],
+           cwd=work, capture_output=True)
+check("static-key forgery rejected once devkey exists", r.returncode == 1)
+
+# A config encrypted under a DIFFERENT machine's devkey is rejected too
 other_key = INIT.base64.urlsafe_b64encode(os.urandom(32))
 with open("config.cfg", "wb") as f:
     f.write(INIT.vault.encrypt_data(b'{"attempts": 99}', other_key))
-import subprocess as sp
 r = sp.run([sys.executable, "-c",
             "import sys, os; sys.path.insert(0, os.getcwd());"
             "import main.INITIALIZE as I; I.load_ui_config()"],

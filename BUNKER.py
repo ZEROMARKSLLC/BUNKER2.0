@@ -160,6 +160,25 @@ def main():
                         break
                     except Exception:
                         continue
+                if config is None and os.path.exists("bunker.salt.bak"):
+                    # An interrupted password change can leave a new salt on
+                    # disk with the old config. The previous salt's .bak
+                    # distinguishes that state from a wrong password — so a
+                    # crashed rotation never burns attempts toward the wipe.
+                    try:
+                        bak_salt = load_salt("bunker.salt.bak")
+                    except Exception:
+                        bak_salt = None
+                    if bak_salt and bak_salt != salt:
+                        for derived_key in derive_candidate_keys(entered_pass, bak_salt):
+                            try:
+                                config = json.loads(vault.decrypt_data(encrypted_config, derived_key).decode())
+                                print(f"{GOLD}** Recovered using the backup salt after an "
+                                      f"interrupted password change. If the vault fails to "
+                                      f"open, restore Bunker.mmf.bak as Bunker.mmf. **{RESET}")
+                                break
+                            except Exception:
+                                continue
                 if config is None:
                     raise ValueError("incorrect access password")
                 
@@ -386,6 +405,7 @@ def manage_passwords_and_notes(hashed_pass):
 
             elif user_cmd == "x":
                 clear_screen()
+                secure_cleanup_common()  # clears the clipboard on logout
                 sys.exit()
                 timedOut = True
 
@@ -564,10 +584,7 @@ def changeDisplayIp(hashed_pass, disable_ipv4):
         return False
     finally:
         # Clean up sensitive data
-        if 'db' in locals(): del db
-        if 'decrypted_data' in locals(): del decrypted_data
         if 'hashed_pass' in locals(): del hashed_pass
-        if 'contents' in locals(): del contents
         vault.secure_wipe()
 
 def pwdGenerate(hashed_pass, db):

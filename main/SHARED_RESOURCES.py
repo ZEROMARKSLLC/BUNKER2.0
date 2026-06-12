@@ -482,8 +482,12 @@ def self_destruct(reason="unspecified", force=False):
         "config.cfg",
         ".vault_config",
         "bunker.devkey",
-        "*.bak",
-        "*.bak.*"
+        # Only OUR backups — never glob a bare *.bak, which would shred
+        # unrelated files in whatever directory BUNKER was launched from
+        "Bunker.mmf.bak*",
+        "bunker.cfg.bak*",
+        "bunker.salt.bak*",
+        "config.cfg.bak*",
 
     ]
     

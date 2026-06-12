@@ -40,9 +40,13 @@ def _live_lines(src):
 
 def test_exactly_one_forced_self_destruct_call_site():
     # Only the max-failed-logins lockout path may pass force=True.
-    call = re.compile(r"(self_destruct|secure_delete_on_failure)\([^)]*force\s*=\s*True")
-    assert sum(bool(call.search(l)) for l in _live_lines(BUNKER_SRC)) == 1
-    assert sum(bool(call.search(l)) for l in _live_lines(INIT_SRC)) == 0
+    # DOTALL + comment-stripped whole-source scan so multi-line calls
+    # cannot slip past a per-line check.
+    call = re.compile(
+        r"(self_destruct|secure_delete_on_failure)\([^)]*force\s*=\s*True",
+        re.DOTALL)
+    assert len(call.findall("\n".join(_live_lines(BUNKER_SRC)))) == 1
+    assert len(call.findall("\n".join(_live_lines(INIT_SRC)))) == 0
 
 
 def test_save_failure_leaves_vault_bytes_identical(vault_dir, key, populated_vault):
@@ -52,10 +56,11 @@ def test_save_failure_leaves_vault_bytes_identical(vault_dir, key, populated_vau
 
 
 def test_no_truncate_writes_of_the_vault():
-    # Every vault write must route through _atomic_write/saveDatabase.
-    pat = re.compile(r'open\(\s*"Bunker\.mmf"\s*,\s*"wb"')
-    live_init = [l for l in INIT_SRC.splitlines() if pat.search(l) and not l.lstrip().startswith("#")]
-    live_bunker = [l for l in BUNKER_SRC.splitlines() if pat.search(l) and not l.lstrip().startswith("#")]
+    # Every write of any vault file must route through _atomic_write.
+    pat = re.compile(
+        r'open\(\s*"(Bunker\.mmf|bunker\.cfg|bunker\.salt|config\.cfg|bunker\.devkey)"\s*,\s*"wb"')
+    live_init = [l for l in _live_lines(INIT_SRC) if pat.search(l)]
+    live_bunker = [l for l in _live_lines(BUNKER_SRC) if pat.search(l)]
     assert live_init == [] and live_bunker == []
 
 
