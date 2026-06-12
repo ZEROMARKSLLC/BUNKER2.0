@@ -1,0 +1,9 @@
+# BUNKER 2.0 runtime dependencies — Python 3.12+ required
+cryptography>=42.0.0
+argon2-cffi>=23.1.0
+inputimeout>=1.0.4
+pyperclip>=1.8.2
+psutil>=5.9.0
+requests>=2.32.0
+# Note: 'keyboard' is intentionally NOT listed — it is an unused import and
+# requires root on Linux. Remove the `import keyboard as kb` line in BUNKER.py.
