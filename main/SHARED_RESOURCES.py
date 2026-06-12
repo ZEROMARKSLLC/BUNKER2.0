@@ -70,7 +70,7 @@ subwm = f"                                                                      
 
 # ip curl
 from typing import Optional
-import threading , socket, subprocess, time, json
+import threading , socket, subprocess, time, json, glob
 
 # Function to animate a loading bar with color
 def loading_bar(duration, length=30):
@@ -460,16 +460,25 @@ def get_config_paths():
                 
     return paths
 
-def self_destruct():
-    """Securely delete all sensitive files with multiple overwrite passes and trash bin bypass"""
+def self_destruct(reason="unspecified", force=False):
+    """Securely delete all sensitive files with multiple overwrite passes and trash bin bypass
+
+    Destruction only runs when force=True (the explicit max-failed-logins
+    lockout path). Every other caller gets a safe exit that preserves the
+    vault, salt, and config files."""
+    if not force:
+        print(f"{RED}** Self-destruct suppressed ({reason}). "
+              f"Exiting without wiping the vault — your data is intact. **{RESET}")
+        sys.exit(1)
     # Updated list of sensitive files
     sensitive_files = [
         "Bunker.mmf", 
         "bunker.cfg", 
         "bunker.salt",     
-        "config.cfg",   
-        ".vault_config",   
-        "*.bak.*"         
+        "config.cfg",
+        ".vault_config",
+        "*.bak",
+        "*.bak.*"
 
     ]
     
@@ -480,14 +489,21 @@ def self_destruct():
         # Multiple overwrite passes for each file
         for file_name in sensitive_files:
             # Check current directory and potential locations
-            paths_to_check = [
+            candidates = [
                 file_name,  # Current directory
                 os.path.join("main", file_name),  # main directory
                 os.path.join("config", file_name) if os.path.exists("config") else None
             ]
-            
-            # Filter out None values
-            paths_to_check = [p for p in paths_to_check if p]
+
+            # Expand wildcard patterns (e.g. *.bak) into real paths
+            paths_to_check = []
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                if any(ch in candidate for ch in "*?["):
+                    paths_to_check.extend(glob.glob(candidate))
+                else:
+                    paths_to_check.append(candidate)
             
             for path in paths_to_check:
                 if os.path.exists(path):
