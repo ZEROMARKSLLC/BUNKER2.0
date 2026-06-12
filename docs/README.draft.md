@@ -5,7 +5,7 @@
 **An offline, source-available terminal vault for passwords & notes — your data never leaves your machine.**
 
 [![License: CPSL v1.0](https://img.shields.io/badge/license-CPSL%20v1.0%20(source--available)-blue)](../LICENSE.txt)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-555555)](#-quick-start)
 [![Price](https://img.shields.io/badge/price-free%20%2F%20pay--what--you--want-brightgreen)](https://zeromarks.gumroad.com/l/vmnbz)
 [![Offline](https://img.shields.io/badge/storage-100%25%20offline-orange)](#-security-model)
@@ -90,7 +90,7 @@ BUNKER 2.0 is a privacy-first password and notes manager that lives entirely in 
 
 ### Requirements
 
-- **Python 3.12 or newer** — BUNKER uses newer f-string syntax and will not start on 3.11 or below. ([Download Python](https://www.python.org/downloads/))
+- **Python 3.10 or newer** ([Download Python](https://www.python.org/downloads/))
 - A terminal, ideally full-screen.
 - Works on Linux, macOS, and Windows.
 
@@ -187,7 +187,7 @@ The complete User Guide is built into the app — open **🏚️ MAIN MENU 🏚�
 
 <br/>
 
-You're almost certainly on Python 3.11 or older. BUNKER requires **Python 3.12+**. Check with:
+You're probably on an old Python. BUNKER requires **Python 3.10+**. Check with:
 
 ```bash
 python3 --version

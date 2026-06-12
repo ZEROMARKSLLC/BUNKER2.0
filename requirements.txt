@@ -1,4 +1,4 @@
-# BUNKER 2.0 runtime dependencies — Python 3.12+ required
+# BUNKER 2.0 runtime dependencies — Python 3.10+ required
 cryptography>=42.0.0
 argon2-cffi>=23.1.0
 inputimeout>=1.0.4
