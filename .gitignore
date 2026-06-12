@@ -1,15 +1,6 @@
-# Python build artifacts
 __pycache__/
 *.pyc
-
-# Local vault data — never commit a real vault. The demo files already
-# tracked in git are unaffected by these rules.
-*.mmf
-*.salt
-*.cfg
-.vault_config
+*.tmp
 *.bak.*
-
-# Editor / OS noise
 .DS_Store
 .qodo
