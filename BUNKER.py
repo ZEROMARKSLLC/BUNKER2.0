@@ -1,14 +1,11 @@
 import base64, json, subprocess, platform, psutil, socket, datetime, \
-base64, uuid, traceback, sys, string, secrets, pyperclip, os,time
-import keyboard as kb
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-from cryptography.fernet import Fernet
+uuid, sys, string, secrets, os,time
 
 from main.INITIALIZE import  (vaultSetup, display_user_guide,
-timeoutInput, load_salt, loadDatabase, vault,changeMasterPassword, 
+timeoutInput, load_salt, loadDatabase, vault,changeMasterPassword,
 changeAutoLogoutTimer, MIN_PASSWORD_LENGTH,load_ui_config,
 MAX_PASSWORD_LENGTH, RECOMMENDED_PASSWORD_LENGTH, save_ui_config,
-timeout_getpass, overwrite_db, timeoutCleanup, timeoutGlobalCode,
+timeout_getpass, timeoutCleanup, timeoutGlobalCode,
 setup_secure_exit_handlers, secure_cleanup_common, interruptCleanup,
 verify_export_encryption, generate_export_encryption, saveDatabase )
 
@@ -32,7 +29,7 @@ def main():
         try:
             with open("Bunker.mmf", "rb"):
                 pass
-        except Exception:
+        except FileNotFoundError:
             check_terminal_size()
             clear_screen()
             print(title_art)
@@ -41,7 +38,14 @@ def main():
             print(
                 f"{CYAN}\nBUNKER SETUP\n\nWelcome to Bunker!\n\n{RED}ALERT: Bunker.mmf was DESTROYED or not found in local directory... SETUP A NEW PASSWORD!{RESET}"
             )
-            print(vaultSetup())
+            setup_result = vaultSetup()
+            if not setup_result:
+                print(f"{GREEN}Vault setup was not completed. Exiting...{RESET}")
+                sys.exit(0)
+        except Exception as e:
+            print(f"{RED}** ALERT: Unable to access Bunker.mmf: {str(e)} **{RESET}")
+            print(f"{GOLD}Your vault was NOT modified. Resolve the issue above and try again.{RESET}")
+            sys.exit(1)
 
         # Load salt and encrypted config
         # Prompt for password
@@ -86,23 +90,15 @@ def main():
         print(f"{CYAN}BUNKER ACCESS{RESET}")
         print(divider)
         
-        if attempts < 3:
-            if attempts == 0:
-                print(PURPLE + "Attempt 0 of 3" + RESET)
-            elif attempts == 1:
-                print(PURPLE + "Attempt 1 of 3" + RESET)
-            elif attempts == 2:
+        if attempts < max_attempts:
+            if attempts == max_attempts - 1:
                 print(
                     PURPLE
-                    + f"Attempt 2 of 3 {RED}"
+                    + f"Attempt {attempts + 1} of {max_attempts} {RED} ** ALERT: Self-destructing after this attempt... **"
                     + RESET
                 )
-            elif attempts == 3:
-                print(
-                    PURPLE
-                    + f"Attempt 3 of 3 {RED} ** ALERT: Self-destructing after this attempt... **"
-                    + RESET
-                )
+            else:
+                print(PURPLE + f"Attempt {attempts + 1} of {max_attempts}" + RESET)
         print(f"{GOLD}Security clearance required! {RESET}")
 
         # Password verification loop
@@ -246,8 +242,10 @@ def main():
             try:
                 dataBase = loadDatabase(hashed_pass)
             except Exception as e:
-                print(f"{RED} ** ALERT: Failed to decrypt database: {str(e)}. Self destructing... **{RESET}")
-                #self_destruct()
+                print(f"{RED} ** ALERT: Failed to decrypt database: {str(e)} **{RESET}")
+                print(f"{GOLD}The vault may be corrupt or the password may be wrong. No data was modified. Exiting...{RESET}")
+                secure_cleanup_common()
+                sys.exit(1)
 
             # Clean up sensitive data
             if 'entered_pass' in locals():
@@ -273,8 +271,9 @@ def main():
         # This is a fallback in case the signal handler doesn't catch it
         interruptCleanup()
     except Exception as e:
-        print(f"{RED}** ALERT: Fatal error: {str(e)}. Self destructing... **{RESET}")
-        self_destruct()
+        print(f"{RED}** ALERT: Fatal error: {str(e)}. Exiting. Your vault data has NOT been modified. **{RESET}")
+        secure_cleanup_common()
+        sys.exit(1)
 
     # Normal exit - if we reach here, exit cleanly
     print(f"{GREEN}Thank you for using BUNKER. ZEROMARKS Dev Team!{RESET}")
@@ -333,8 +332,8 @@ def manage_passwords_and_notes(hashed_pass):
                         latest_contents = f.read()
                     timedOut = main_pwd_manager(hashed_pass, latest_contents)
                 except Exception as e:
-                    print(f"{RED}** ALERT: Failed to read latest database: {str(e)} **{RESET}")
-                    timedOut = main_pwd_manager(hashed_pass, contents)
+                    print(f"{RED}** ALERT: Failed to read latest database: {str(e)} Using in-memory data. **{RESET}")
+                    timedOut = main_pwd_manager(hashed_pass, vault.encrypt_data(json.dumps(db).encode(), hashed_pass))
 
             elif user_cmd == "s":
                 # Get the latest database before passing to manager
@@ -343,8 +342,8 @@ def manage_passwords_and_notes(hashed_pass):
                         latest_contents = f.read()
                     timedOut = main_note_manager(hashed_pass, latest_contents)
                 except Exception as e:
-                    print(f"{RED}** ALERT: Failed to read latest database: {str(e)} **{RESET}")
-                    timedOut = main_note_manager(hashed_pass, contents)
+                    print(f"{RED}** ALERT: Failed to read latest database: {str(e)} Using in-memory data. **{RESET}")
+                    timedOut = main_note_manager(hashed_pass, vault.encrypt_data(json.dumps(db).encode(), hashed_pass))
 
             elif user_cmd == "d":
                 timedOut = changeDisplayIp(hashed_pass, disable_ipv4)
@@ -391,8 +390,9 @@ def manage_passwords_and_notes(hashed_pass):
 
     except Exception as e:
         print(f"{RED}** ALERT: Failed to manage database: {str(e)} **{RESET}")
-        vault.secure_delete_on_failure()
-        
+        print(f"{GOLD}Returning to login. Your vault data has NOT been modified.{RESET}")
+        return False
+
     finally:
         # Secure cleanup of sensitive data
         try:
@@ -415,8 +415,7 @@ def displayTimeout():
             # To show the actual timeout value: f"{CYAN}Auto-Logout: {GREEN}ON{RESET} ({GOLD}{current_timeout}{RESET} seconds)"
         else:
             return f"{CYAN}Auto-Logout is: {RED}OFF{RESET}"
-    except Exception as e:
-        print(f"DEBUG: displayTimeout error: {e}")
+    except Exception:
         # Fail silently but return a default value
         return f"{CYAN}Auto-Logout: {GOLD}Unknown{RESET}"
     
@@ -626,7 +625,7 @@ def pwdGenerate(hashed_pass, db):
                     clear_screen()
                     displayHeader(f"🪄 {CYAN}GENERATE RANDOM PASSWORD{RESET}")
                     print(f"Generated Password: {password}")
-                    print(to_clipboard(password))
+                    to_clipboard(password)
 
                     # Ask user to continue or return
                     userContinue = timeoutInput(
@@ -1310,9 +1309,8 @@ def addProfile(hashed_pass, db):
                     "password": encrypted_password,
                     "favorite": profile_data.get('favorite', False),
                 }
-                encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                with open("Bunker.mmf", "wb") as f:
-                    f.write(encrypted_db)
+                if not saveDatabase(db, hashed_pass):
+                    raise ValueError("Failed to save database")
                 clear_screen()
                 displayHeader(f"{CYAN}✏️  ADD PROFILE{RESET}")
                 print(f"{GREEN}** SUCCESS: Profile successfully created! **{RESET}")
@@ -1371,6 +1369,7 @@ def displayFavorites(hashed_pass, db):
         favorites = {k: v for k, v in db.items() if v.get("favorite", False)}
         decrypted_profiles = []
         index = 1
+        skipped_profiles = 0
 
         for profile_id, info in favorites.items():
             try:
@@ -1383,9 +1382,13 @@ def displayFavorites(hashed_pass, db):
                     (index, profile_id, domain, username, email, is_favorite)
                 )
                 index += 1
-            except Exception as e:
-                # Silently skip profiles that cannot be decrypted
+            except Exception:
+                # Skip profiles that cannot be decrypted
+                skipped_profiles += 1
                 continue
+
+        if skipped_profiles:
+            print(f"{GOLD}Warning: {skipped_profiles} profile{'' if skipped_profiles == 1 else 's'} could not be decrypted and {'is' if skipped_profiles == 1 else 'are'} not shown.{RESET}\n")
 
         num_favorites = len(decrypted_profiles)
         print(
@@ -1453,10 +1456,7 @@ def displayFavorites(hashed_pass, db):
                                     )
                                     break
                                 elif copy_choice == "c":
-                                    pyperclip.copy(password)
-                                    print(
-                                        f"{GREEN}Password copied to clipboard! You can paste it with CTRL + V.{RESET}\n"
-                                    )
+                                    to_clipboard(password)
                                     break
                                 elif copy_choice == ".c":
                                     return False
@@ -1742,10 +1742,9 @@ def editProfileData(hashed_pass, db):
                 }
 
                 # Save encrypted database with enhanced security
-                encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                with open("Bunker.mmf", "wb") as f:
-                    f.write(encrypted_db)
-                
+                if not saveDatabase(db, hashed_pass):
+                    raise ValueError("Failed to save database")
+
                 clear_screen()
                 displayHeader(f"{CYAN}🖍️  EDIT A PROFILE{RESET}")
                 print(f"{GREEN} ** SUCCESS: Profile '{curr_domain}' successfully updated! **{RESET}")
@@ -1833,7 +1832,9 @@ def deleteProfileData(hashed_pass, db):
                 f"{GOLD}Found {num_matching_profiles} matching profile{'s' if num_matching_profiles > 1 else ''}:{RESET}\n"
             )
             profile_indices = {}
-            for i, (profile_id, info) in enumerate(matching_profiles.items(), 1):
+            skipped_profiles = 0
+            display_index = 0
+            for profile_id, info in matching_profiles.items():
                 try:
                     domain_bytes = base64.b64decode(info["domain"]) if isinstance(info["domain"], str) else info["domain"]
                     domain = vault.decrypt_data(domain_bytes, hashed_pass).decode("utf-8")
@@ -1846,14 +1847,26 @@ def deleteProfileData(hashed_pass, db):
                         email_bytes = base64.b64decode(email) if isinstance(email, str) else email
                         email = vault.decrypt_data(email_bytes, hashed_pass).decode("utf-8")
                     is_favorite = "⭐" if info.get("favorite", False) else ""
-                    profile_indices[i] = profile_id
+                    display_index += 1
+                    profile_indices[display_index] = profile_id
                     print(
-                        f"{CYAN}Profile {i} {is_favorite}{GOLD} | {LPURPLE}Domain: {domain}{RESET} \n{DBLUE}Username: {RESET}{username} {GOLD}, {DBLUE}Email:{RESET} {email}\n"
+                        f"{CYAN}Profile {display_index} {is_favorite}{GOLD} | {LPURPLE}Domain: {domain}{RESET} \n{DBLUE}Username: {RESET}{username} {GOLD}, {DBLUE}Email:{RESET} {email}\n"
                     )
-                except Exception as e:
-                    print(
-                        f"{RED} ** ALERT: Error reading profile '{profile_id}': {str(e)} **{RESET}"
-                    )
+                except Exception:
+                    skipped_profiles += 1
+
+            if skipped_profiles:
+                print(
+                    f"{GOLD}Warning: {skipped_profiles} profile{'' if skipped_profiles == 1 else 's'} could not be decrypted and {'is' if skipped_profiles == 1 else 'are'} not shown (and will NOT be deleted).{RESET}\n"
+                )
+
+            num_matching_profiles = len(profile_indices)
+            if num_matching_profiles == 0:
+                print(f"{RED} ** ALERT: No profiles could be displayed for deletion. **{RESET}")
+                userContinue = timeoutInput(
+                    f"{GOLD}\nPress 'enter' to return to menu...{RESET}"
+                )
+                return False if userContinue != timeoutGlobalCode else True
 
             # Ask if the user wants to delete all, select profiles, or cancel
             while True:
@@ -1874,7 +1887,8 @@ def deleteProfileData(hashed_pass, db):
             keys_to_delete = []
             selected_indices = []
             if delete_choice == "a":
-                keys_to_delete = list(matching_profiles.keys())
+                # Only delete profiles that were actually displayed (undecryptable entries are skipped)
+                keys_to_delete = list(profile_indices.values())
                 selected_indices = list(profile_indices.keys())
             elif delete_choice == "s":
                 while True:
@@ -1937,15 +1951,12 @@ def deleteProfileData(hashed_pass, db):
                 print(
                     f"{GOLD}\nSelected profile{'s' if len(decrypted_deleted_domains) > 1 else ''} deleted:{RESET}"
                 )
-                print(f"{f'{GOLD},\n{LPURPLE}'.join(decrypted_deleted_domains)}")
-                
+                sep = f"{GOLD},\n{LPURPLE}"
+                print(sep.join(decrypted_deleted_domains))
+
             # Save changes to the database with enhanced security
-            try:
-                encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                with open("Bunker.mmf", "wb") as f:
-                    f.write(encrypted_db)
-            except Exception as e:
-                print(f"{RED} ** ALERT: Failed to update database. Error: {str(e)} **{RESET}")
+            if not saveDatabase(db, hashed_pass):
+                print(f"{RED} ** ALERT: Failed to update database. Changes were not saved. **{RESET}")
 
             userContinue = timeoutInput(
                 f"{GOLD}\nPress 'enter' to return to menu or type 'r' to retry...{RESET}"
@@ -2102,10 +2113,7 @@ def findProfileData(hashed_pass, db):
                                 )
                                 break
                             elif option == "c":
-                                pyperclip.copy(password)
-                                print(
-                                    f"\n{GREEN}Password copied to clipboard! You can paste with CTRL + V.{RESET}\n"
-                                )
+                                to_clipboard(password)
                                 break
                             elif option == ".c" or option == timeoutGlobalCode:
                                 return False if option != timeoutGlobalCode else True
@@ -2309,10 +2317,7 @@ def tagProfiles(hashed_pass, db):
                             )
                             break
                         elif option == "c":
-                            pyperclip.copy(password)
-                            print(
-                                f"\n{GREEN}Password copied to clipboard! You can paste with CTRL + V.{RESET}\n"
-                            )
+                            to_clipboard(password)
                             break
                         elif option == ".c" or option == timeoutGlobalCode:
                             return False if option != timeoutGlobalCode else True
@@ -2381,6 +2386,7 @@ def readAllProfiles(hashed_pass, db):
         # Store decrypted profiles for later use
         decrypted_profiles = []
         index = 1
+        skipped_profiles = 0
         for profile_id, info in matching_profiles.items():
             try:
                 # Decrypt domain (required field) with enhanced security
@@ -2404,9 +2410,13 @@ def readAllProfiles(hashed_pass, db):
                 )
                 index += 1
 
-            except Exception as e:
-                # Silently skip profiles that cannot be decrypted
+            except Exception:
+                # Skip profiles that cannot be decrypted
+                skipped_profiles += 1
                 continue
+
+        if skipped_profiles:
+            print(f"{GOLD}Warning: {skipped_profiles} profile{'' if skipped_profiles == 1 else 's'} could not be decrypted and {'is' if skipped_profiles == 1 else 'are'} not shown.{RESET}\n")
 
         # Display profiles
         for idx, profile in enumerate(decrypted_profiles, 1):
@@ -2453,8 +2463,7 @@ def readAllProfiles(hashed_pass, db):
                                 print(f"{GREEN}Password request granted! \n\n{DBLUE}Password:{RESET} {password}{RESET}\n")
                                 break
                             elif copy_choice == "c":
-                                pyperclip.copy(password)
-                                print(f"{GREEN}Password copied to clipboard! You can paste it with CTRL + V.{RESET}\n")
+                                to_clipboard(password)
                                 break
                             elif copy_choice == ".c" or copy_choice == timeoutGlobalCode:
                                 return False if copy_choice != timeoutGlobalCode else True
@@ -2554,28 +2563,20 @@ def main_note_manager(hashed_pass, contents):
                 if user_cmd == "a":
                     # Get the latest database contents before calling addNote
                     try:
-                        with open("Bunker.mmf", "r") as f:
+                        with open("Bunker.mmf", "rb") as f:
                             latest_contents = f.read()
                         if latest_contents:
-                            latest_contents_bytes = latest_contents.encode()
-                            decrypted_latest = vault.decrypt_data(latest_contents_bytes, hashed_pass)
+                            decrypted_latest = vault.decrypt_data(latest_contents, hashed_pass)
                             db = json.loads(decrypted_latest.decode("utf-8"))
-                    except Exception:
+                    except Exception as e:
                         # If we can't get the latest, use what we have
-                        pass
-                        
+                        print(f"{GOLD}Warning: Could not refresh database, using in-memory data: {str(e)}{RESET}")
+
                     timedOut = addNote(hashed_pass, db)
-                    
+
                     # Save changes after operation
                     if not timedOut:
-                        try:
-                            encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                            with open("Bunker.mmf", "wb") as f:
-                                f.write(encrypted_db)
-                            # Update contents for future operations
-                            contents = encrypted_db
-                        except Exception as e:
-                            print(f"{RED}** ALERT: Failed to save changes: {str(e)} **{RESET}")
+                        if not saveDatabase(db, hashed_pass):
                             input(f"{GOLD}Press ENTER to continue...{RESET}")
 
                 elif user_cmd == "s":
@@ -2585,14 +2586,7 @@ def main_note_manager(hashed_pass, contents):
                     timedOut = deleteNoteData(hashed_pass, db)
                     # Save changes after operation
                     if not timedOut:
-                        try:
-                            encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                            with open("Bunker.mmf", "wb") as f:
-                                f.write(encrypted_db)
-                            # Update contents for future operations
-                            contents = encrypted_db
-                        except Exception as e:
-                            print(f"{RED}** ALERT: Failed to save changes: {str(e)} **{RESET}")
+                        if not saveDatabase(db, hashed_pass):
                             input(f"{GOLD}Press ENTER to continue...{RESET}")
 
                 elif user_cmd == "f":
@@ -2608,14 +2602,7 @@ def main_note_manager(hashed_pass, contents):
                     timedOut = editNoteData(hashed_pass, db)
                     # Save changes after operation
                     if not timedOut:
-                        try:
-                            encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                            with open("Bunker.mmf", "wb") as f:
-                                f.write(encrypted_db)
-                            # Update contents for future operations
-                            contents = encrypted_db
-                        except Exception as e:
-                            print(f"{RED}** ALERT: Failed to save changes: {str(e)} **{RESET}")
+                        if not saveDatabase(db, hashed_pass):
                             input(f"{GOLD}Press ENTER to continue...{RESET}")
 
                 elif user_cmd == "t":
@@ -2751,9 +2738,8 @@ def addNote(hashed_pass, db):
                     "favorite": is_favorite,
                     "private": is_private
                 }
-                encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                with open("Bunker.mmf", "wb") as f:
-                    f.write(encrypted_db)
+                if not saveDatabase(db, hashed_pass):
+                    raise ValueError("Failed to save database")
                 clear_screen()
                 displayHeader(f"{CYAN}📝 ADD A NOTE{RESET}")
                 print(f"{GREEN}** SUCCESS: Note successfully created! **{RESET}")
@@ -2932,8 +2918,7 @@ def displayFavoriteNotes(hashed_pass, db):
                                         print(f"\n{GOLD}Full Note Content: {RESET}{decrypted_content}\n")
                                     break
                                 elif copy_choice == "c":
-                                    pyperclip.copy(decrypted_content)
-                                    print(f"{GREEN}Note content copied to clipboard! You can paste it with CTRL + V.{RESET}\n")
+                                    to_clipboard(decrypted_content)
                                     break
                                 elif copy_choice == ".c":
                                     return False
@@ -3174,8 +3159,8 @@ def editNoteData(hashed_pass, db):
                         if new_private_input not in ["y", "n"]:
                             print(f"{RED}** ALERT: Invalid input. Please enter 'y', 'n', or press 'enter'. **{RESET}")
                             continue
-                            new_private = (new_private_input == "y")
-                            break
+                        new_private = (new_private_input == "y")
+                        break
 
                     # If note is marked as private, force tags to be "PRIVATE"
                     if new_private:
@@ -3204,11 +3189,8 @@ def editNoteData(hashed_pass, db):
                     }
 
                     # Save updated database with enhanced security
-                    encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                    
-                    # Write directly as bytes to ensure consistent format
-                    with open("Bunker.mmf", "wb") as f:
-                        f.write(encrypted_db)
+                    if not saveDatabase(db, hashed_pass):
+                        raise ValueError("Failed to save database")
 
                     # Success message
                     clear_screen()
@@ -3419,10 +3401,7 @@ def findNoteData(hashed_pass, db):
                                         print(f"\n{GOLD}Full Note Content: {RESET}{content}\n")
                                     break
                                 elif action == "c":
-                                    pyperclip.copy(content)
-                                    print(
-                                        f"{GREEN}Note content copied to clipboard! You can paste it with CTRL + V.{RESET}\n"
-                                    )
+                                    to_clipboard(content)
                                     break
                                 elif action == "r":
                                     break
@@ -3775,8 +3754,8 @@ def exportNotes(hashed_pass, db):
             print(f"{RED}║ You will need it to decrypt and import notes.        ║{RESET}")
             print(f"{RED}╚══════════════════════════════════════════════════════╝{RESET}")
 
-        timeoutInput(f"\n{GOLD}Press 'enter' to continue...{RESET}")
-        return True
+        userContinue = timeoutInput(f"\n{GOLD}Press 'enter' to continue...{RESET}")
+        return False if userContinue != timeoutGlobalCode else True
 
     except Exception as e:
         print(f"{RED}** ALERT: Failed to export notes: {str(e)} **{RESET}")
@@ -4281,16 +4260,8 @@ def exportProfiles(hashed_pass, db):
                     profile_counter += 1
                 except Exception as e:
                     print(
-                        f"{GOLD}Warning: Could not decrypt {field} for profile {profile_id}: {str(e)}{RESET}"
+                        f"{GOLD}Warning: Could not process profile {profile_id}: {str(e)}{RESET}"
                     )
-                    error_counter += 1
-                    continue
-                                # Continue processing - optional fields can fail
-
-    
-                except Exception as e:
-                    print(f"{RED}Profile {profile_id} failed: Unexpected error{RESET}")
-                    print(f"Error details: {str(e)}{RESET}")
                     error_counter += 1
                     continue
     
@@ -4581,9 +4552,10 @@ def importProfiles(hashed_pass, db):
                 print(f"{RED} ** ALERT: Error importing profile: {str(e)} **{RESET}")
                 continue
 
-        encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-        with open("Bunker.mmf", "wb") as f:
-            f.write(encrypted_db)
+        if not saveDatabase(db, hashed_pass):
+            print(f"{RED} ** ALERT: Failed to save imported profiles. The vault was not updated. **{RESET}")
+            timeoutInput(f"{GOLD}\nPress 'enter' to return to menu...{RESET}")
+            return False
 
         print(f"\n{GREEN}** SUCCESS: Import completed **{RESET}")
         print(f"{GOLD}Profiles imported: {imported_count}{RESET}")
@@ -4771,6 +4743,8 @@ def tagNotes(hashed_pass, db):
                         if 1 <= selected_index <= len(decrypted_notes):
                             selected_note = decrypted_notes[selected_index - 1]
                             _, note_id, title, _, tags, encrypted_content, is_favorite, is_private = selected_note
+                            # Look up the selected note's own record so we decrypt the right content
+                            note_info = db.get(note_id, {})
 
                             try:
                                 while True:
@@ -4809,8 +4783,8 @@ def tagNotes(hashed_pass, db):
                                     ).lower()
                                     if copy_choice == "v":
                                         # Decrypt the content with enhanced security
-                                        decrypted_content = decode_and_decrypt("content", info, hashed_pass)
-                                        
+                                        decrypted_content = decode_and_decrypt("content", note_info, hashed_pass)
+
                                         if is_private:
                                             clear_screen()
                                             displayHeader(f"{CYAN}🏷️ VIEW NOTE CONTENT{RESET}")
@@ -4827,12 +4801,9 @@ def tagNotes(hashed_pass, db):
                                     
                                     elif copy_choice == "c":
                                         # Decrypt the content with enhanced security for copying
-                                        decrypted_content = decode_and_decrypt("content", info, hashed_pass)
-                                        
-                                        pyperclip.copy(decrypted_content)
-                                        print(
-                                            f"{GREEN}Note content copied to clipboard! You can paste it with CTRL + V.{RESET}\n"
-                                        )
+                                        decrypted_content = decode_and_decrypt("content", note_info, hashed_pass)
+
+                                        to_clipboard(decrypted_content)
                                         break
                                     elif copy_choice == ".c":
                                         return False
@@ -5001,13 +4972,9 @@ def deleteNoteData(hashed_pass, db):
                     except Exception as e:
                         print(f"{RED} ** ALERT: Error displaying deleted note {index}: {e} **{RESET}")
             
-            try:
-                # Use enhanced security for encryption and save as binary
-                encrypted_db = vault.encrypt_data(json.dumps(db).encode(), hashed_pass)
-                with open("Bunker.mmf", "wb") as f:
-                    f.write(encrypted_db)
-            except Exception as e:
-                print(f"{RED} ** ALERT: Failed to update database. Error: {e} **{RESET}")
+            # Use enhanced security for encryption and save
+            if not saveDatabase(db, hashed_pass):
+                print(f"{RED} ** ALERT: Failed to update database. Changes were not saved. **{RESET}")
             
             userContinue = timeoutInput(f"{GOLD}\nPress 'enter' to return or type 'r' to retry...{RESET}")
             if userContinue == "r":
@@ -5089,7 +5056,7 @@ def displayAllNotes(hashed_pass, db):
                 except Exception as e:
                     print(f"{RED}Error decrypting note {idx}: {str(e)}{RESET}")
 
-        if note_count == 0:
+        if len(decrypted_notes) == 0:
             print(f"{RED} ** ALERT: No notes available to display. ADD A NOTE! **{RESET}")
             userContinue = timeoutInput(f"{GOLD}\nPress 'enter' to return to menu...{RESET}")
             return False if userContinue != timeoutGlobalCode else True
@@ -5104,7 +5071,7 @@ def displayAllNotes(hashed_pass, db):
                     print(f"{L_CYAN}Title: {RESET}{title} {GOLD}, {DBLUE}Preview:{RESET} {preview}")
 
             while True:
-                note_range = f"1-{note_count}" if note_count > 1 else "1"
+                note_range = f"1-{len(decrypted_notes)}" if len(decrypted_notes) > 1 else "1"
                 view_note = timeoutInput(
                     f"{GOLD}Select the note to view its full content ({note_range}) or type .c to cancel: {RESET}"
                 )
@@ -5114,7 +5081,7 @@ def displayAllNotes(hashed_pass, db):
                     return True
                 elif view_note.isdigit():
                     selected_index = int(view_note)
-                    if 1 <= selected_index <= note_count:
+                    if 1 <= selected_index <= len(decrypted_notes):
                         selected_note = decrypted_notes[selected_index - 1]
                         _, note_id, title, _, tags, info, is_favorite, is_private = selected_note
                         
@@ -5176,10 +5143,7 @@ def displayAllNotes(hashed_pass, db):
                                         print(f"{GOLD}Content: {RESET}{decrypted_content}\n")
                                     break
                                 elif copy_choice == "c":
-                                    pyperclip.copy(decrypted_content)
-                                    print(
-                                        f"{GREEN}Note content copied to clipboard! You can paste it with CTRL + V.{RESET}\n"
-                                    )
+                                    to_clipboard(decrypted_content)
                                     break
                                 elif copy_choice == ".c":
                                     return False

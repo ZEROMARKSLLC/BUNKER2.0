@@ -614,7 +614,7 @@ def to_clipboard(input_to_copy):
         )
         clear_thread.start()
 
-        print(f"{GREEN}\n** SUCCESS: Copied to clipboard. It will be cleared automatically after 30 seconds. **{RESET}")
+        print(f"{GREEN}\n** SUCCESS: Copied to clipboard — paste with CTRL + V. Clears automatically in 30 seconds. **{RESET}")
     except Exception:
         # pyperclip raises if no clipboard backend is available (e.g. headless
         # Linux without xclip/xsel) -- report cleanly without internals
