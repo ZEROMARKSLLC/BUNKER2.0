@@ -105,6 +105,30 @@ class TestAtomicWrite:
         _atomic_write(target, b"new")
         assert open(target, "rb").read() == b"new"
 
+    def test_save_completes_when_backup_step_fails(self, tmp_path, monkeypatch):
+        # A3: the .bak copy is best-effort. If it raises, the primary atomic
+        # replace must still happen (the vault is updated) and no .tmp is left.
+        import main.INITIALIZE as INIT
+
+        target = str(tmp_path / "out.bin")
+        _atomic_write(target, b"old")  # create an existing file so .bak runs
+
+        real_mkstemp = INIT.tempfile.mkstemp
+
+        def flaky_mkstemp(*args, **kwargs):
+            # Force only the rolling-backup temp to fail; the primary .tmp ok.
+            if str(kwargs.get("prefix", "")).find(".bak.") != -1:
+                raise OSError("simulated backup failure")
+            return real_mkstemp(*args, **kwargs)
+
+        monkeypatch.setattr(INIT.tempfile, "mkstemp", flaky_mkstemp)
+
+        _atomic_write(target, b"new")
+
+        assert open(target, "rb").read() == b"new"  # primary file updated
+        leftovers = [f for f in os.listdir(str(tmp_path)) if f.endswith(".tmp")]
+        assert leftovers == []
+
 
 class TestExportEncryption:
     def test_correct_passphrase_verifies(self):

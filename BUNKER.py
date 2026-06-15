@@ -6,7 +6,7 @@ timeoutInput, load_salt, loadDatabase, vault,changeMasterPassword,
 changeAutoLogoutTimer, MIN_PASSWORD_LENGTH,load_ui_config,
 MAX_PASSWORD_LENGTH, RECOMMENDED_PASSWORD_LENGTH, save_ui_config,
 timeout_getpass, timeoutCleanup, timeoutGlobalCode,
-derive_candidate_keys,
+derive_candidate_keys, PEPPER,
 setup_secure_exit_handlers, secure_cleanup_common, interruptCleanup,
 verify_export_encryption, generate_export_encryption, saveDatabase )
 
@@ -103,13 +103,26 @@ def main():
                 )
         print(f"{GOLD}Security clearance required! {RESET}")
 
+        # Startup reminder: a custom pepper is active and MUST be preserved,
+        # or every vault created with it becomes permanently unopenable.
+        if PEPPER != "":
+            print(f"{RED}** NOTICE: A custom BUNKER_PEPPER is active. It must be preserved "
+                  f"exactly — losing or changing it makes the vault unopenable with no "
+                  f"recovery. **{RESET}")
+
         # Password verification loop
         hashed_pass = False
         timedOut = False
 
         while not hashed_pass:
-            user_cmd = input(
-                f"{GOLD}Do you want to show your password? (y/n) or exit(e): {RESET}"
+            # Use timeoutInput (not bare input) so the unlock screen itself
+            # auto-logs-out: on inactivity timeoutInput calls timeoutCleanup()
+            # → os._exit, it does NOT return the sentinel. current_timeout was
+            # loaded from ui_config above and is in scope here. The sentinel
+            # branch below stays as intentional dead/defensive code.
+            user_cmd = timeoutInput(
+                f"{GOLD}Do you want to show your password? (y/n) or exit(e): {RESET}",
+                timeout=current_timeout,
             ).lower()
 
             if user_cmd == timeoutGlobalCode:

@@ -492,6 +492,13 @@ def self_destruct(reason="unspecified", force=False):
     
     deleted_count = 0
     try:
+        # NOTE: the in-place multi-pass overwrite below is BEST-EFFORT only.
+        # On copy-on-write (btrfs/ZFS/APFS), SSD/flash (wear-leveling), and
+        # journaled filesystems, overwriting a file does NOT reliably destroy
+        # the original blocks. The data is actually removed by the
+        # shred/secure-unlink step (and ultimately by physical destruction or
+        # full-disk encryption); the overwrite is a defense-in-depth gesture,
+        # not a guarantee.
         # Multiple overwrite passes for each file
         for file_name in sensitive_files:
             # Check current directory and potential locations
@@ -572,32 +579,75 @@ def displayHeader(title):
 
 
 ###Helpers
-# Function to clear clipboard after a specified delay
-def clear_clipboard(delay):
-    """Clear clipboard after specified delay with error handling"""
+# Clipboard auto-clear state. A single superseding timer is used: every new
+# copy bumps _clip_token, so a stale timer that fires after the user copied
+# something newer becomes a no-op. The lock guards the written value + token.
+import threading as _threading
+_clip_lock = _threading.Lock()
+_clip_written = None          # the exact string we last wrote
+_clip_token = 0               # monotonically-increasing copy token
+_clip_timer = None            # the single pending clear timer
+
+
+def clear_clipboard(token):
+    """Clear the clipboard ONLY if it still holds the value we wrote under
+    this token. If the user copied something else in the meantime, leave it
+    alone. A paste() failure falls back to clearing anyway (security beats
+    convenience)."""
+    global _clip_written
+    with _clip_lock:
+        # A newer copy superseded us — do nothing.
+        if token != _clip_token:
+            return
+        expected = _clip_written
+    if expected is None:
+        return
     try:
-        time.sleep(delay)
-        pyperclip.copy("")
+        current = pyperclip.paste()
+    except Exception:
+        # Can't read the clipboard — clear defensively rather than risk
+        # leaving a secret behind.
+        current = expected
+    try:
+        with _clip_lock:
+            # Re-check the token under the lock; a copy may have raced in
+            # while we were reading the clipboard.
+            if token != _clip_token:
+                return
+            if current == expected:
+                pyperclip.copy("")
+                # We just cleared our own value; forget it so a later stale
+                # timer can't act on it.
+                _clip_written = None
     except Exception as e:
         print(f"{RED}Error clearing clipboard: {str(e)}{RESET}")
 
 
 # Function to copy input to clipboard and start timer to clear clipboard
-def to_clipboard(input_to_copy):
-    """Copy data to clipboard with auto-clear timer and enhanced security"""
+def to_clipboard(input_to_copy, delay=30):
+    """Copy data to clipboard with auto-clear timer and enhanced security.
+
+    Records the exact string written and a fresh token under a lock, then
+    arms a single superseding daemon timer. A newer copy bumps the token so
+    the prior pending clear becomes a no-op (it won't wipe whatever the user
+    copied next)."""
+    global _clip_written, _clip_token, _clip_timer
     try:
-        # Convert input to string and copy to clipboard
-        pyperclip.copy(str(input_to_copy))
-        
-        # Create daemon thread to clear clipboard after delay
-        clear_thread = threading.Thread(
-            target=clear_clipboard, 
-            args=(30,),
-            daemon=True  # Make thread daemon so it won't prevent program exit
-        )
-        clear_thread.start()
-        
-        return f"{GREEN}\n** SUCCESS: Password was saved to clipboard. It will be removed from your clipboard after 30 seconds. **{RESET}"
+        value = str(input_to_copy)
+        pyperclip.copy(value)
+
+        with _clip_lock:
+            _clip_token += 1
+            token = _clip_token
+            _clip_written = value
+            # Supersede any prior pending clear.
+            if _clip_timer is not None:
+                _clip_timer.cancel()
+            _clip_timer = threading.Timer(delay, clear_clipboard, args=(token,))
+            _clip_timer.daemon = True  # never block program exit
+            _clip_timer.start()
+
+        return f"{GREEN}\n** SUCCESS: Password was saved to clipboard. It will be removed from your clipboard after {int(delay)} seconds. **{RESET}"
     except Exception as e:
         return f"{RED}\n** ALERT: Failed to copy to clipboard: {str(e)} **{RESET}"
 

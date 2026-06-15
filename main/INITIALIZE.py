@@ -196,9 +196,23 @@ class SecureVaultEnhanced:
         """Verify password using config data.
 
         Tries the current scheme (password + PEPPER) first, then the
-        legacy scheme (password + password) used by vaults created before
-        the pepper fix, so existing vaults keep opening."""
-        for pepper in (PEPPER, password):
+        empty-pepper scheme (so a vault created with NO pepper still opens
+        if a BUNKER_PEPPER was later set), then the legacy scheme
+        (password + password) used by vaults created before the pepper fix.
+
+        The peppers are DE-DUPLICATED so that when PEPPER == "" the
+        empty-pepper candidate is not derived a second time, and the legacy
+        password-as-pepper candidate is unchanged. Derivation stays lazy:
+        each candidate's Argon2id+PBKDF2 run happens only if the previous
+        ones did not match.
+
+        NOTE: the reverse case — a vault created WITH a pepper that was later
+        lost — is mathematically unrecoverable and intentionally NOT handled."""
+        tried = []
+        for pepper in (PEPPER, "", password):
+            if pepper in tried:
+                continue
+            tried.append(pepper)
             try:
                 key = self.derive_key_hybrid(password, salt, pepper)
                 if self.decrypt_data(verifier, key) == b"BUNKER_VERIFIED":
@@ -246,6 +260,14 @@ class SecureVaultEnhanced:
         ]
         
         try:
+            # NOTE: the in-place multi-pass overwrite below is BEST-EFFORT only
+            # and is INEFFECTIVE on copy-on-write (btrfs/ZFS/APFS), SSD/flash
+            # (wear-leveling remaps blocks), and journaled filesystems —
+            # overwriting the file does NOT reliably destroy the original
+            # on-disk blocks. The actual delete relies on the shred /
+            # secure-unlink step below (and ultimately on full-disk encryption
+            # or physical destruction); the overwrite is defense-in-depth, not
+            # a guarantee.
             # Multiple overwrite passes for each file
             for file_path in sensitive_files:
                 if os.path.exists(file_path):
@@ -433,6 +455,13 @@ class SecureVaultEnhanced:
         return config
         
 
+# NOTE: On a real inactivity timeout, timeoutInput()/timeout_getpass() do NOT
+# return this sentinel — they call timeoutCleanup(), which clears the clipboard,
+# wipes keys, and terminates the process via os._exit(). The string below and
+# every `== timeoutGlobalCode` branch in the codebase are therefore intentionally
+# DEAD / defensive code and must NOT be relied upon for control flow. Reviving
+# the sentinel as a real signal requires converting ALL call sites in a single
+# change (so no prompt half-honors it) plus tests proving the new contract.
 timeoutGlobalCode = "*TIMEOUT*"
 vault = SecureVaultEnhanced()
 MIN_PASSWORD_LENGTH = 6
@@ -547,7 +576,13 @@ def timeoutInput(caption, timeout=None, hashed_pass=None):
 
     timeout=None uses the user's configured auto-logout value (so every
     prompt honors the setting, not just the login screen); timeout <= 0
-    means the timer is disabled and the prompt waits indefinitely."""
+    means the timer is disabled and the prompt waits indefinitely.
+
+    IMPORTANT: on an actual timeout this function does NOT return
+    timeoutGlobalCode. It calls timeoutCleanup(), which clears the clipboard,
+    wipes keys, and terminates the process via os._exit(). The assignment to
+    timeoutGlobalCode below is dead/defensive only (timeoutCleanup never
+    returns); callers must not depend on a sentinel being returned."""
     if timeout is None:
         try:
             timeout = load_ui_config().get("current_timeout", 60)
@@ -574,16 +609,32 @@ def timeoutInput(caption, timeout=None, hashed_pass=None):
 PEPPER = os.environ.get("BUNKER_PEPPER", "")
 
 def derive_candidate_keys(password, salt):
-    """Yield the current-scheme key, then the legacy (password-as-pepper)
-    key used by vaults created before the pepper fix.
+    """Yield the current-scheme key (password + PEPPER), then an empty-pepper
+    key, then the legacy (password-as-pepper) key used by vaults created
+    before the pepper fix.
+
+    The empty-pepper candidate lets a vault that was created with NO pepper
+    keep opening even if the operator later sets a BUNKER_PEPPER. It is
+    DE-DUPLICATED: when PEPPER == "" the current key already uses an empty
+    pepper, so we never derive (or yield) it twice.
+
+    NOTE: the reverse direction — a vault created WITH a pepper whose pepper
+    was later lost or changed — is mathematically unrecoverable (the secret is
+    simply gone) and is intentionally NOT addressed by any candidate here.
 
     Lazy on purpose: each derivation costs a full Argon2id+PBKDF2 run
-    (~0.3s desktop, seconds on a phone), so the legacy key is only derived
-    when the current-scheme key fails."""
+    (~0.3s desktop, seconds on a phone), so each fallback key is only derived
+    when the previous candidate fails."""
     current = vault.derive_key_hybrid(password, salt, PEPPER)
+    yielded = [current]
     yield current
+    if PEPPER != "":
+        empty = vault.derive_key_hybrid(password, salt, "")
+        if empty not in yielded:
+            yielded.append(empty)
+            yield empty
     legacy = vault.derive_key_hybrid(password, salt, password)
-    if legacy != current:
+    if legacy not in yielded:
         yield legacy
 
 # Machine-local key for the pre-auth UI config (attempt counter, timeout).
@@ -642,6 +693,16 @@ def load_ui_config(hashed_pass=None):
             decrypted = vault.decrypt_data(encrypted, LEGACY_UI_KEY)
             config = json.loads(decrypted.decode("utf-8"))
             save_ui_config(config, hashed_pass)
+            # ONE-TIME migration notice (only on a SUCCESSFUL re-encrypt, never
+            # on the corrupt-config branch below): config.cfg has just been
+            # migrated to this machine's bunker.devkey scheme. This is a
+            # one-way change. Do NOT downgrade.
+            print(f"{GOLD}** NOTICE: config.cfg has been migrated to this machine's "
+                  f"device-key (bunker.devkey) encryption. This is a ONE-TIME, "
+                  f"irreversible change. Do NOT run an OLDER BUNKER release against "
+                  f"this directory — it can trigger the old self-destruct and wipe "
+                  f"the vault. Back up Bunker.mmf, bunker.salt, config.cfg and "
+                  f"bunker.devkey before any version change. **{RESET}")
             return config
         except Exception:
             pass
@@ -861,7 +922,13 @@ def getpass_thread(prompt, q):
         q.put(f"ERROR: {str(e)}")
 
 def timeout_getpass(prompt, timeout):
-    """Get password with timeout and enhanced error handling"""
+    """Get password with timeout and enhanced error handling.
+
+    IMPORTANT: on an actual timeout this function does NOT return
+    timeoutGlobalCode. It calls timeoutCleanup(), which clears the clipboard,
+    wipes keys, and terminates the process via os._exit() (and otherwise
+    sys.exit(1)). It never yields the sentinel; the `== timeoutGlobalCode`
+    branches at its call sites are intentionally dead/defensive."""
     if timeout is None or timeout <= 0:
         # If timeout is invalid, use getpass directly
         return getpass.getpass(prompt)
@@ -934,20 +1001,35 @@ def _atomic_write(path, data, keep_backup=True):
         if os.name == "posix":
             os.chmod(tmp, 0o600)
 
-        # Roll the current good version to .bak (copy, so `path` never vanishes)
+        # Roll the current good version to .bak (copy, so `path` never vanishes).
+        # The backup is a BEST-EFFORT convenience: the atomic os.replace below
+        # is what actually protects the vault, so if anything in the .bak step
+        # fails we log and continue rather than abort the save. The copy is
+        # streamed in fixed-size chunks instead of reading the whole file into
+        # memory, so a large vault doesn't spike RSS on every save.
         if keep_backup and os.path.exists(path):
-            bfd, bak_tmp = tempfile.mkstemp(prefix=base + ".bak.", suffix=".tmp",
-                                            dir=directory)
+            bak_tmp = None
             try:
+                bfd, bak_tmp = tempfile.mkstemp(prefix=base + ".bak.",
+                                                suffix=".tmp", dir=directory)
                 with os.fdopen(bfd, "wb") as bf, open(path, "rb") as src:
-                    bf.write(src.read())
+                    _CHUNK = 64 * 1024
+                    while True:
+                        chunk = src.read(_CHUNK)
+                        if not chunk:
+                            break
+                        bf.write(chunk)
                     bf.flush()
                     os.fsync(bf.fileno())
                 if os.name == "posix":
                     os.chmod(bak_tmp, 0o600)
                 os.replace(bak_tmp, path + ".bak")
                 bak_tmp = None
-            finally:
+            except Exception as e:
+                # Backup failed — keep going; the primary atomic write is the
+                # guarantee that matters. Just clean up any partial .bak temp.
+                print(f"{GOLD}** Warning: could not refresh {base}.bak "
+                      f"(continuing with save): {str(e)} **{RESET}")
                 if bak_tmp is not None:
                     try:
                         os.unlink(bak_tmp)
@@ -1173,6 +1255,19 @@ def vaultSetup():
             salt = os.urandom(SALT_SIZE)
             save_salt(salt)
             created_files.append("bunker.salt")
+
+            # LOUD warning whenever a custom pepper is in effect at creation:
+            # losing or changing BUNKER_PEPPER makes this vault PERMANENTLY
+            # unopenable, with no recovery path whatsoever.
+            if PEPPER != "":
+                print(f"\n{RED}{'*' * 70}{RESET}")
+                print(f"{RED}** CRITICAL: A custom BUNKER_PEPPER is set. This vault is being "
+                      f"created WITH that pepper. **{RESET}")
+                print(f"{RED}** If BUNKER_PEPPER is EVER lost or changed, this vault becomes "
+                      f"PERMANENTLY unopenable. **{RESET}")
+                print(f"{RED}** There is NO recovery. Store the pepper as carefully as your "
+                      f"master password. **{RESET}")
+                print(f"{RED}{'*' * 70}{RESET}\n")
 
             # Derive key using password + salt (+ optional pepper)
             derived_key = vault.derive_key_hybrid(password_provided, salt, PEPPER)

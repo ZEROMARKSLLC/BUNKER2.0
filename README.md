@@ -61,7 +61,7 @@ BUNKER 2.0 is a privacy-first password and notes manager that lives entirely in 
 | Feature | What it actually does |
 | --- | --- |
 | **100% local storage** | One vault file (`Bunker.mmf`) on your machine. No cloud sync, no account, no tracking. |
-| **Self-destruct lockout** | 3 failed logins securely wipes the vault — a deliberate "burner vault" design. [Read the warning](#-the-burner-vault-self-destruct) before relying on it. |
+| **Self-destruct lockout** | 3 failed logins wipes the vault (best-effort overwrite + secure-unlink) — a deliberate "burner vault" design. [Read the warning](#-the-burner-vault-self-destruct) before relying on it. |
 | **Persistent attempt counter** | Failed attempts are remembered across restarts and reset **only** on a successful login. Restarting the app does not buy more guesses. |
 | **Auto-logout timer** | Configurable inactivity logout. |
 | **Clipboard auto-clear** | Copied secrets are wiped from the clipboard after 30 seconds. |
@@ -135,13 +135,18 @@ Hit a snag? See [Troubleshooting](#-troubleshooting).
 
 ## 💣 The Burner Vault: Self-Destruct
 
-BUNKER is intentionally designed as a **burner vault**: after **3 failed login attempts**, the vault is securely wiped. No recovery prompt, no backdoor, no "forgot password" flow.
+BUNKER is intentionally designed as a **burner vault**: after **3 failed login attempts**, the vault is wiped (multi-pass overwrite, then `shred`/secure-unlink where available). No recovery prompt, no backdoor, no "forgot password" flow.
 
 > ⚠️ **Read this before storing anything you can't lose**
 >
 > - The failed-attempt counter **persists across restarts**. Two typos today and one next week = wiped vault. It resets **only** when you log in successfully.
 > - A wipe is **permanent**. There is no recovery mechanism, on purpose.
+> - The wipe is **best-effort, not a guarantee.** In-place overwriting is **ineffective on copy-on-write (btrfs/ZFS/APFS), SSD/flash (wear-leveling), and journaled filesystems** — the original blocks may survive. Treat the wipe as "the file is gone and the key is destroyed," not as forensic-grade erasure. For true unrecoverability rely on full-disk encryption or physical destruction of the media.
 > - Keep independent backups of anything critical. BUNKER protects against intruders, not against your own forgetfulness.
+
+> 🛑 **Do NOT downgrade — vault-wipe risk**
+>
+> Once this version runs, `config.cfg` is re-encrypted to a per-machine `bunker.devkey` scheme (a one-time, irreversible migration). Running an **OLDER** BUNKER release against this directory can fail to read the migrated config and trigger the old **unconditional self-destruct**, **permanently wiping the vault**. Before any version change (up or down), **back up `Bunker.mmf`, `bunker.salt`, `config.cfg`, and `bunker.devkey`** together.
 
 If that trade-off isn't for you, this isn't your tool — and we'd rather tell you that up front.
 
@@ -164,6 +169,8 @@ We'd rather under-promise than over-claim. Here is exactly what BUNKER does and 
 
 - The failed-attempt counter is an anti-casual-intruder measure, not a cryptographic boundary. An attacker with a copy of your vault file is ultimately held off by your master password's strength — so make it a good one. Hardening the counter is on the [roadmap](#-roadmap).
 - There are currently **no progressive delays** between failed attempts and **no file-tamper scanner** — both are planned, not shipped. (AES-GCM's built-in authentication does mean a modified vault file simply fails to decrypt.)
+- The self-destruct overwrite is **best-effort**, not guaranteed secure erasure — see the [self-destruct warning](#-the-burner-vault-self-destruct) for why on modern (CoW/SSD/journaled) filesystems the only reliable protections are full-disk encryption and physical destruction.
+- **Do not downgrade.** This version performs a one-time, irreversible migration of `config.cfg` to a per-machine `bunker.devkey` scheme. Running an older release afterward can trigger the old unconditional self-destruct and wipe the vault — back up `Bunker.mmf`, `bunker.salt`, `config.cfg`, and `bunker.devkey` before any version change.
 - This is an educational, source-available project — audit the code yourself; it's all here.
 
 ---

@@ -108,3 +108,70 @@ def test_stored_password_copies_have_autoclear():
 def test_timeout_zero_means_disabled(vault_dir, monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a, **k: "answer")
     assert INIT.timeoutInput("? ", timeout=0) == "answer"
+
+
+def test_empty_pepper_candidates_are_deduplicated(monkeypatch):
+    # (a) With PEPPER == "" the candidates are exactly current + legacy:
+    # the empty-pepper candidate must NOT be derived/yielded a second time
+    # (the current scheme already uses an empty pepper). conftest's fast_kdf
+    # already pins PEPPER == "", but be explicit so intent is local.
+    monkeypatch.setattr(INIT, "PEPPER", "")
+    pw, salt = "pw123456", os.urandom(32)
+    cands = list(INIT.derive_candidate_keys(pw, salt))
+    current = INIT.vault.derive_key_hybrid(pw, salt, "")
+    legacy = INIT.vault.derive_key_hybrid(pw, salt, pw)
+    assert cands == [current, legacy]
+    # (b) A vault key made with an empty pepper is among the candidates.
+    assert current in cands
+    # (c) De-dup holds: no duplicate keys are ever yielded.
+    assert len(cands) == len(set(cands))
+
+
+def test_empty_pepper_candidate_present_when_custom_pepper_set(monkeypatch):
+    # With a custom pepper, the empty-pepper key (for a vault created with NO
+    # pepper) is offered as an additional, de-duplicated candidate.
+    monkeypatch.setattr(INIT, "PEPPER", "s3cret-pepper")
+    pw, salt = "pw123456", os.urandom(32)
+    cands = list(INIT.derive_candidate_keys(pw, salt))
+    current = INIT.vault.derive_key_hybrid(pw, salt, "s3cret-pepper")
+    empty = INIT.vault.derive_key_hybrid(pw, salt, "")
+    legacy = INIT.vault.derive_key_hybrid(pw, salt, pw)
+    assert cands == [current, empty, legacy]
+    assert len(cands) == len(set(cands))
+
+
+def test_autoclear_does_not_wipe_user_clipboard(monkeypatch):
+    # ISSUE 3: if the user copies something else after BUNKER copied a secret,
+    # the auto-clear must NOT wipe it. Drive clear_clipboard directly with an
+    # in-memory fake clipboard rather than sleeping out the 30s timer.
+    fake = {"value": ""}
+    monkeypatch.setattr(SR.pyperclip, "copy", lambda v: fake.__setitem__("value", v))
+    monkeypatch.setattr(SR.pyperclip, "paste", lambda: fake["value"])
+    # Stop the real timer from firing; we invoke clear ourselves.
+    monkeypatch.setattr(SR.threading, "Timer",
+                        lambda *a, **k: type("T", (), {"daemon": False,
+                                                       "start": lambda self: None,
+                                                       "cancel": lambda self: None})())
+    SR.to_clipboard("SECRET-X")
+    assert fake["value"] == "SECRET-X"
+    token = SR._clip_token
+    # Something else writes the clipboard.
+    fake["value"] = "USER-COPIED-Y"
+    # The pending clear fires now — it must leave Y untouched.
+    SR.clear_clipboard(token)
+    assert fake["value"] == "USER-COPIED-Y"
+
+
+def test_autoclear_wipes_our_own_value(monkeypatch):
+    # The compare-before-clear must still clear when the clipboard STILL holds
+    # exactly what BUNKER wrote (no superseding copy).
+    fake = {"value": ""}
+    monkeypatch.setattr(SR.pyperclip, "copy", lambda v: fake.__setitem__("value", v))
+    monkeypatch.setattr(SR.pyperclip, "paste", lambda: fake["value"])
+    monkeypatch.setattr(SR.threading, "Timer",
+                        lambda *a, **k: type("T", (), {"daemon": False,
+                                                       "start": lambda self: None,
+                                                       "cancel": lambda self: None})())
+    SR.to_clipboard("SECRET-Z")
+    SR.clear_clipboard(SR._clip_token)
+    assert fake["value"] == ""
