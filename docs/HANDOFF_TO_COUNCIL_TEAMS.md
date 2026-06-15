@@ -28,9 +28,14 @@ core-file edits now, commit everything, push, and hand off.**
    the mobile code sat uncommitted on a local machine for months).
 2. **Stop editing** `BUNKER.py`, `main/INITIALIZE.py`,
    `main/SHARED_RESOURCES.py`. Those are owned by the integration branch now.
-3. Confirm **no real vault artifacts** are tracked: `Bunker.mmf`,
-   `bunker.cfg`, `bunker.salt`, `config.cfg`, `bunker.devkey`, any `*.bak`.
-   If any are tracked, `git rm --cached` them and add to `.gitignore`.
+3. Confirm **no *real* (personal) vault artifacts** are tracked. **Important
+   distinction:** the canonical branch *intentionally* tracks the published
+   **demo vault** — `Bunker.mmf`, `bunker.cfg`, `bunker.salt`, `config.cfg`
+   (password `rootroot`, fake data, documented "Demo Mode" + a CI test). That
+   is a product feature, **leave it tracked.** Only `bunker.devkey`, `*.bak`,
+   and `.vault_config` are gitignored. If a *personal* vault (your own real
+   passwords) ever got committed, `git rm --cached` it — but do NOT untrack
+   the demo vault (that would diverge from canonical and break CI).
 4. Post the final commit SHA + branch name back so the integration branch
    knows the handoff point.
 
@@ -56,10 +61,12 @@ branch's `conftest.py`, which uses `key` / `vault_dir` / `populated_vault`).
 >
 > 1. Commit and push every uncommitted change in your working tree to your
 >    branch. Do NOT use `git add -A` — stage source files explicitly so you
->    never commit real vault artifacts (`Bunker.mmf`, `bunker.cfg`,
->    `bunker.salt`, `config.cfg`, `bunker.devkey`, `*.bak`).
-> 2. If any of those vault artifacts are already tracked on your branch,
->    `git rm --cached` them, add them to `.gitignore`, and commit that.
+>    never commit a *real personal* vault or `bunker.devkey` / `*.bak`.
+> 2. Leave the published **demo vault** (`Bunker.mmf`, `bunker.cfg`,
+>    `bunker.salt`, `config.cfg` with password `rootroot`, fake data) tracked
+>    — it is an intentional product feature, tracked identically on canonical,
+>    and a CI test depends on it. Only untrack a file if it contains *your own
+>    real passwords*.
 > 3. Do NOT make any further edits to `BUNKER.py`, `main/INITIALIZE.py`, or
 >    `main/SHARED_RESOURCES.py` — those are owned by the integration branch
 >    from here on.
