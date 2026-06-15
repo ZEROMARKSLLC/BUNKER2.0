@@ -15,8 +15,10 @@ venv/
 Bunker.mmf
 Bunker.mmf.bak.*
 *.tmp
+*.bak
 bunker.salt
 bunker.cfg
+bunker.devkey
 config.cfg
 
 # User exports (may contain real secrets)
