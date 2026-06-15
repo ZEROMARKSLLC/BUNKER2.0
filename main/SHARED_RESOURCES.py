@@ -476,19 +476,16 @@ def self_destruct(reason="unspecified", force=False):
         sys.exit(1)
     # Updated list of sensitive files
     sensitive_files = [
-        "Bunker.mmf", 
-        "bunker.cfg", 
-        "bunker.salt",     
+        "Bunker.mmf",
+        "bunker.cfg",
+        "bunker.salt",
         "config.cfg",
         ".vault_config",
         "bunker.devkey",
-        # Only OUR backups — never glob a bare *.bak, which would shred
-        # unrelated files in whatever directory BUNKER was launched from
-        "Bunker.mmf.bak*",
-        "bunker.cfg.bak*",
-        "bunker.salt.bak*",
-        "config.cfg.bak*",
-
+        # .bak recovery files are intentionally NOT wiped: an attacker with
+        # file-system access can copy them before guessing, so wiping adds
+        # nothing security-wise — while a legitimate user whose password
+        # change crashed mid-rotation needs them to recover their vault.
     ]
     
     print(f"{GOLD}Self-destruct initiated. Searching for sensitive files...{RESET}")
@@ -504,15 +501,7 @@ def self_destruct(reason="unspecified", force=False):
                 os.path.join("config", file_name) if os.path.exists("config") else None
             ]
 
-            # Expand wildcard patterns (e.g. *.bak) into real paths
-            paths_to_check = []
-            for candidate in candidates:
-                if not candidate:
-                    continue
-                if any(ch in candidate for ch in "*?["):
-                    paths_to_check.extend(glob.glob(candidate))
-                else:
-                    paths_to_check.append(candidate)
+            paths_to_check = [c for c in candidates if c]
             
             for path in paths_to_check:
                 if os.path.exists(path):
