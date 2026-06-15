@@ -366,7 +366,7 @@ def spinning_line(duration, message="Checking Files for tampering...", color=GOL
 
         clear_screen()
         print(title_art)
-        print(f"{CYAN}Checking Filese{RESET}")
+        print(f"{CYAN}Checking Files{RESET}")
         print(divider)
         # More visually appealing spinner characters
         spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]

@@ -1,7 +1,7 @@
 import base64, json, sys, getpass, os, gc, random, string, \
-platform, subprocess, threading, time, pyperclip, signal,time,datetime
+platform, subprocess, threading, time, pyperclip, signal,time,datetime, uuid, hashlib
 
-from typing import Optional
+from typing import Optional, Dict, Any, Tuple, Union, List
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -18,10 +18,17 @@ from main.SHARED_RESOURCES import (clear_screen, title_art, subwm,
 divider, nuke_art, nuke_text, check_terminal_size, self_destruct,
 displayHeader,)
 
-# Constants
-from main.SHARED_RESOURCES import (L_CYAN, BUNKER, DBLUE, 
-FORANGE, FBLUE, FRED, GOLD, GREEN, RED, RESET, DPURPLE,
-MUSTARD, VINTAGE, LPURPLE, PURPLE, CYAN )
+# Import shared vault functions and constants from mobile resources
+from main.SHARED_RESOURCES_MOBILE import (
+    L_CYAN, BUNKER, DBLUE, FORANGE, FBLUE, FRED, GOLD, GREEN, RED, RESET,
+    DPURPLE, MUSTARD, VINTAGE, LPURPLE, PURPLE, CYAN,
+    # Vault functions
+    derive_system_key, save_ui_config, load_ui_config,
+    secure_cleanup_common, SecureVaultEnhanced, vault,
+    # Timeout and setup functions
+    timeoutInput, timeoutCleanup, timeout_getpass, setup_timeout,
+    verify_setup, vaultSetup, timeoutGlobalCode
+)
 
 ###BUNKER HELPERS###
 
@@ -306,20 +313,17 @@ class SecureVaultEnhanced:
             raise ValueError(f"Failed to manage timeout: {str(e)}")
 
     def load_timeout_value(hashed_pass):
-        """Load timeout value using a temporary key approach"""
+        """Load timeout value using shared UI config"""
         try:
-            # This is a simplified approach for loading timeout without full authentication
-            # In practice, you should always use the user's password-derived key
-            #temp
-            #config = vault.manage_config(hashed_pass)
-            #return config.get("timeout_value", 60)
+            # Use shared load_ui_config from SHARED_RESOURCES_MOBILE
             ui_config = load_ui_config()
             return ui_config.get("current_timeout", 60)
         except Exception as e:
             print(f"{GOLD}Warning: Could not load timeout value. Using default.{RESET}")
-            return 60
+            return 60    
         
     def manage_max_attempts(self, key):
+
         """Handle maximum attempts operations"""
         try:
             config = self.load_config(key)
@@ -596,38 +600,401 @@ def load_encrypted_file(filename, hashed_pass):
     except Exception as e:
         raise ValueError(f"Failed to load {filename}: {str(e)}")
 
-def timeoutInput(caption, timeout=60, hashed_pass=None):
-    """Handle timeout input with enhanced security"""
-    try:
-        user_input = inputimeout(prompt=caption, timeout=timeout)
-    except TimeoutOccurred:
-        user_input = timeoutGlobalCode
-        timeoutCleanup()
-    return user_input
-
+# timeoutInput(), timeoutCleanup(), timeout_getpass(), and setup_timeout() are now imported from SHARED_RESOURCES_MOBILE
 
 PEPPER = os.environ.get("BUNKER_PEPPER", "default_pepper_value")
 
-def load_ui_config(hashed_pass=None):
-    try:
-        key = hashed_pass or b"0"*32  # Replace with a real key if possible
-        with open("config.cfg", "rb") as f:
-            encrypted = f.read()
-        decrypted = vault.decrypt_data(encrypted, key)
-        return json.loads(decrypted.decode("utf-8"))
-    except Exception:
-            # Self-destruct if config.cfg is missing or corrupted
-            print(f"{RED}** ALERT: UI config file missing or corrupted. Self-destructing... **{RED}")
-            self_destruct()
-            sys.exit(1)
+# Cross-platform UI key management functions
+def generate_ui_key() -> bytes:
+    """Generate a cryptographically secure 32-byte UI key"""
+    return os.urandom(32)
+
+# derive_system_key() is now imported from SHARED_RESOURCES_MOBILE
+
+def get_ui_key() -> Optional[bytes]:
+    """Retrieve UI key from platform-specific secure storage"""
+    system = platform.system()
     
-def save_ui_config(config, hashed_pass=None):
-    # If you have the password/key, use it; otherwise, use a static key for now
-    key = hashed_pass or b"0"*32  # Replace with a real key if possible
-    data = json.dumps(config).encode("utf-8")
-    encrypted = vault.encrypt_data(data, key)
-    with open("config.cfg", "wb") as f:
-        f.write(encrypted)
+    try:
+        if system == "Darwin":  # macOS
+            return _get_ui_key_macos()
+        elif system == "Windows":
+            return _get_ui_key_windows()
+        else:  # Linux and other Unix-like systems
+            return _get_ui_key_linux()
+    except Exception as e:
+        print(f"{GOLD}Warning: Could not retrieve UI key from secure storage: {str(e)}{RESET}")
+        return None
+
+def set_ui_key(key: bytes) -> bool:
+    """Store UI key in platform-specific secure storage"""
+    system = platform.system()
+    
+    try:
+        if system == "Darwin":  # macOS
+            return _set_ui_key_macos(key)
+        elif system == "Windows":
+            return _set_ui_key_windows(key)
+        else:  # Linux and other Unix-like systems
+            return _set_ui_key_linux(key)
+    except Exception as e:
+        print(f"{RED}Error: Could not store UI key in secure storage: {str(e)}{RESET}")
+        return False
+
+def get_ui_meta() -> Optional[Dict[str, Any]]:
+    """Retrieve UI metadata from platform-specific secure storage"""
+    system = platform.system()
+    
+    try:
+        if system == "Darwin":  # macOS
+            return _get_ui_meta_macos()
+        elif system == "Windows":
+            return _get_ui_meta_windows()
+        else:  # Linux and other Unix-like systems
+            return _get_ui_meta_linux()
+    except Exception as e:
+        print(f"{GOLD}Warning: Could not retrieve UI metadata: {str(e)}{RESET}")
+        return None
+
+def set_ui_meta(metadata: Dict[str, Any]) -> bool:
+    """Store UI metadata in platform-specific secure storage"""
+    system = platform.system()
+    
+    try:
+        if system == "Darwin":  # macOS
+            return _set_ui_meta_macos(metadata)
+        elif system == "Windows":
+            return _set_ui_meta_windows(metadata)
+        else:  # Linux and other Unix-like systems
+            return _set_ui_meta_linux(metadata)
+    except Exception as e:
+        print(f"{RED}Error: Could not store UI metadata: {str(e)}{RESET}")
+        return False
+
+# macOS implementation using Keychain Services
+def _get_ui_key_macos() -> Optional[bytes]:
+    """Retrieve UI key from macOS Keychain"""
+    try:
+        result = subprocess.run([
+            'security', 'find-generic-password',
+            '-s', 'bunker-ui-key',
+            '-a', 'bunker-app',
+            '-w'
+        ], capture_output=True, text=True, check=False)
+        
+        if result.returncode == 0:
+            key_b64 = result.stdout.strip()
+            return base64.urlsafe_b64decode(key_b64)
+        return None
+    except Exception:
+        return None
+
+def _set_ui_key_macos(key: bytes) -> bool:
+    """Store UI key in macOS Keychain"""
+    try:
+        key_b64 = base64.urlsafe_b64encode(key).decode('utf-8')
+        
+        # Delete existing key first
+        subprocess.run([
+            'security', 'delete-generic-password',
+            '-s', 'bunker-ui-key',
+            '-a', 'bunker-app'
+        ], capture_output=True, check=False)
+        
+        # Add new key
+        result = subprocess.run([
+            'security', 'add-generic-password',
+            '-s', 'bunker-ui-key',
+            '-a', 'bunker-app',
+            '-w', key_b64,
+            '-U'  # Update if exists
+        ], capture_output=True, check=False)
+        
+        return result.returncode == 0
+    except Exception:
+        return False
+
+def _get_ui_meta_macos() -> Optional[Dict[str, Any]]:
+    """Retrieve UI metadata from macOS Keychain"""
+    try:
+        result = subprocess.run([
+            'security', 'find-generic-password',
+            '-s', 'bunker-ui-meta',
+            '-a', 'bunker-app',
+            '-w'
+        ], capture_output=True, text=True, check=False)
+        
+        if result.returncode == 0:
+            meta_b64 = result.stdout.strip()
+            meta_json = base64.urlsafe_b64decode(meta_b64).decode('utf-8')
+            return json.loads(meta_json)
+        return None
+    except Exception:
+        return None
+
+def _set_ui_meta_macos(metadata: Dict[str, Any]) -> bool:
+    """Store UI metadata in macOS Keychain"""
+    try:
+        meta_json = json.dumps(metadata)
+        meta_b64 = base64.urlsafe_b64encode(meta_json.encode('utf-8')).decode('utf-8')
+        
+        # Delete existing metadata first
+        subprocess.run([
+            'security', 'delete-generic-password',
+            '-s', 'bunker-ui-meta',
+            '-a', 'bunker-app'
+        ], capture_output=True, check=False)
+        
+        # Add new metadata
+        result = subprocess.run([
+            'security', 'add-generic-password',
+            '-s', 'bunker-ui-meta',
+            '-a', 'bunker-app',
+            '-w', meta_b64,
+            '-U'  # Update if exists
+        ], capture_output=True, check=False)
+        
+        return result.returncode == 0
+    except Exception:
+        return False
+
+# Windows implementation using Credential Manager
+def _get_ui_key_windows() -> Optional[bytes]:
+    """Retrieve UI key from Windows Credential Manager"""
+    try:
+        result = subprocess.run([
+            'powershell', '-Command',
+            '$cred = Get-StoredCredential -Target "bunker-ui-key" -ErrorAction SilentlyContinue; if ($cred) { $cred.Password }'
+        ], capture_output=True, text=True, check=False)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            key_b64 = result.stdout.strip()
+            return base64.urlsafe_b64decode(key_b64)
+        return None
+    except Exception:
+        return None
+
+def _set_ui_key_windows(key: bytes) -> bool:
+    """Store UI key in Windows Credential Manager"""
+    try:
+        key_b64 = base64.urlsafe_b64encode(key).decode('utf-8')
+        
+        # Use cmdkey to store the credential
+        result = subprocess.run([
+            'cmdkey', '/generic:bunker-ui-key',
+            '/user:bunker-app',
+            f'/pass:{key_b64}'
+        ], capture_output=True, check=False)
+        
+        return result.returncode == 0
+    except Exception:
+        return False
+
+def _get_ui_meta_windows() -> Optional[Dict[str, Any]]:
+    """Retrieve UI metadata from Windows Credential Manager"""
+    try:
+        result = subprocess.run([
+            'powershell', '-Command',
+            '$cred = Get-StoredCredential -Target "bunker-ui-meta" -ErrorAction SilentlyContinue; if ($cred) { $cred.Password }'
+        ], capture_output=True, text=True, check=False)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            meta_b64 = result.stdout.strip()
+            meta_json = base64.urlsafe_b64decode(meta_b64).decode('utf-8')
+            return json.loads(meta_json)
+        return None
+    except Exception:
+        return None
+
+def _set_ui_meta_windows(metadata: Dict[str, Any]) -> bool:
+    """Store UI metadata in Windows Credential Manager"""
+    try:
+        meta_json = json.dumps(metadata)
+        meta_b64 = base64.urlsafe_b64encode(meta_json.encode('utf-8')).decode('utf-8')
+        
+        # Use cmdkey to store the credential
+        result = subprocess.run([
+            'cmdkey', '/generic:bunker-ui-meta',
+            '/user:bunker-app',
+            f'/pass:{meta_b64}'
+        ], capture_output=True, check=False)
+        
+        return result.returncode == 0
+    except Exception:
+        return False
+
+# Linux implementation using Secret Service with encrypted file fallback
+def _get_ui_key_linux() -> Optional[bytes]:
+    """Retrieve UI key from Linux Secret Service or encrypted file fallback"""
+    # Try Secret Service first
+    try:
+        result = subprocess.run([
+            'secret-tool', 'lookup',
+            'service', 'bunker-ui-key',
+            'account', 'bunker-app'
+        ], capture_output=True, text=True, check=False)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            key_b64 = result.stdout.strip()
+            return base64.urlsafe_b64decode(key_b64)
+    except Exception:
+        pass
+    
+    # Fallback to encrypted file
+    return _get_ui_key_linux_file()
+
+def _set_ui_key_linux(key: bytes) -> bool:
+    """Store UI key in Linux Secret Service or encrypted file fallback"""
+    key_b64 = base64.urlsafe_b64encode(key).decode('utf-8')
+    
+    # Try Secret Service first
+    try:
+        result = subprocess.run([
+            'secret-tool', 'store',
+            '--label=Bunker UI Key',
+            'service', 'bunker-ui-key',
+            'account', 'bunker-app'
+        ], input=key_b64, text=True, capture_output=True, check=False)
+        
+        if result.returncode == 0:
+            return True
+    except Exception:
+        pass
+    
+    # Fallback to encrypted file
+    return _set_ui_key_linux_file(key)
+
+def _get_ui_meta_linux() -> Optional[Dict[str, Any]]:
+    """Retrieve UI metadata from Linux Secret Service or encrypted file fallback"""
+    # Try Secret Service first
+    try:
+        result = subprocess.run([
+            'secret-tool', 'lookup',
+            'service', 'bunker-ui-meta',
+            'account', 'bunker-app'
+        ], capture_output=True, text=True, check=False)
+        
+        if result.returncode == 0 and result.stdout.strip():
+            meta_b64 = result.stdout.strip()
+            meta_json = base64.urlsafe_b64decode(meta_b64).decode('utf-8')
+            return json.loads(meta_json)
+    except Exception:
+        pass
+    
+    # Fallback to encrypted file
+    return _get_ui_meta_linux_file()
+
+def _set_ui_meta_linux(metadata: Dict[str, Any]) -> bool:
+    """Store UI metadata in Linux Secret Service or encrypted file fallback"""
+    meta_json = json.dumps(metadata)
+    meta_b64 = base64.urlsafe_b64encode(meta_json.encode('utf-8')).decode('utf-8')
+    
+    # Try Secret Service first
+    try:
+        result = subprocess.run([
+            'secret-tool', 'store',
+            '--label=Bunker UI Metadata',
+            'service', 'bunker-ui-meta',
+            'account', 'bunker-app'
+        ], input=meta_b64, text=True, capture_output=True, check=False)
+        
+        if result.returncode == 0:
+            return True
+    except Exception:
+        pass
+    
+    # Fallback to encrypted file
+    return _set_ui_meta_linux_file(metadata)
+
+# Linux encrypted file fallback implementation
+def _get_ui_key_linux_file() -> Optional[bytes]:
+    """Retrieve UI key from encrypted file (Linux fallback)"""
+    try:
+        key_file = os.path.expanduser('~/.bunker_ui_key')
+        if not os.path.exists(key_file):
+            return None
+        
+        system_key = derive_system_key()
+        
+        with open(key_file, 'rb') as f:
+            encrypted_data = f.read()
+        
+        # Simple XOR encryption with system key
+        decrypted = bytearray()
+        for i, byte in enumerate(encrypted_data):
+            decrypted.append(byte ^ system_key[i % len(system_key)])
+        
+        return bytes(decrypted)
+    except Exception:
+        return None
+
+def _set_ui_key_linux_file(key: bytes) -> bool:
+    """Store UI key in encrypted file (Linux fallback)"""
+    try:
+        key_file = os.path.expanduser('~/.bunker_ui_key')
+        system_key = derive_system_key()
+        
+        # Simple XOR encryption with system key
+        encrypted = bytearray()
+        for i, byte in enumerate(key):
+            encrypted.append(byte ^ system_key[i % len(system_key)])
+        
+        with open(key_file, 'wb') as f:
+            f.write(encrypted)
+        
+        # Set restrictive permissions
+        os.chmod(key_file, 0o600)
+        return True
+    except Exception:
+        return False
+
+def _get_ui_meta_linux_file() -> Optional[Dict[str, Any]]:
+    """Retrieve UI metadata from encrypted file (Linux fallback)"""
+    try:
+        meta_file = os.path.expanduser('~/.bunker_ui_meta')
+        if not os.path.exists(meta_file):
+            return None
+        
+        system_key = derive_system_key()
+        
+        with open(meta_file, 'rb') as f:
+            encrypted_data = f.read()
+        
+        # Simple XOR encryption with system key
+        decrypted = bytearray()
+        for i, byte in enumerate(encrypted_data):
+            decrypted.append(byte ^ system_key[i % len(system_key)])
+        
+        meta_json = decrypted.decode('utf-8')
+        return json.loads(meta_json)
+    except Exception:
+        return None
+
+def _set_ui_meta_linux_file(metadata: Dict[str, Any]) -> bool:
+    """Store UI metadata in encrypted file (Linux fallback)"""
+    try:
+        meta_file = os.path.expanduser('~/.bunker_ui_meta')
+        system_key = derive_system_key()
+        
+        meta_json = json.dumps(metadata).encode('utf-8')
+        
+        # Simple XOR encryption with system key
+        encrypted = bytearray()
+        for i, byte in enumerate(meta_json):
+            encrypted.append(byte ^ system_key[i % len(system_key)])
+        
+        with open(meta_file, 'wb') as f:
+            f.write(encrypted)
+        
+        # Set restrictive permissions
+        os.chmod(meta_file, 0o600)
+        return True
+    except Exception:
+        return False
+
+# load_ui_config() is now imported from SHARED_RESOURCES_MOBILE
+    
+# save_ui_config() is now imported from SHARED_RESOURCES_MOBILE
 
 def save_salt(salt, filename="bunker.salt"):
     with open(filename, "wb") as f:
@@ -641,49 +1008,7 @@ def generate_salt(length=32):
     return os.urandom(length)
 
  
-def secure_cleanup_common():
-    """
-    Common cleanup operations shared by all exit scenarios.
-    This handles the sensitive data cleanup without any user messaging.
-    """
-    try:
-        # Reset global variables
-        global cached_ip
-        cached_ip = None
-        
-        # Clear any active threads
-        try:
-            # Stop any running background threads
-            if 'ip_fetch_thread' in globals() and globals()['ip_fetch_thread'] is not None:
-                if hasattr(globals()['ip_fetch_thread'], 'do_run'):
-                    globals()['ip_fetch_thread'].do_run = False
-        except Exception:
-            # Silently handle thread cleanup errors
-            pass
-            
-        # Clear clipboard if it contains sensitive data
-        try:
-            pyperclip.copy("")
-        except Exception:
-            # Silently handle clipboard errors
-            pass
-            
-        # Secure memory cleanup
-        try:
-            # Create a vault instance for secure wiping
-            vault.secure_wipe()
-            
-            # Force garbage collection to clean up memory
-            import gc
-            gc.collect()
-        except Exception:
-            # Silently handle memory cleanup errors
-            pass
-            
-        return True
-    except Exception as e:
-        print(f"{RED}Error during common cleanup: {str(e)}{RESET}")
-        return False
+# secure_cleanup_common() is now imported from SHARED_RESOURCES_MOBILE
 
 def timeoutCleanup():
     """
@@ -961,206 +1286,11 @@ def load_max_attempts(hashed_pass):
         print(f"{GOLD}Warning: Could not load max attempts. Using default value.{RESET}")
         return 3
 
-def setup_timeout() -> Optional[int]:
-    """Configure timeout settings"""
-    while True:
-        try:
-            timeout_choice = input(
-                f"{GOLD}Enter timeout value in seconds (10-3600, or 0 for no timeout. "
-                f"Press enter for recommended 60 seconds, .c to cancel): {RESET}"
-            )
-
-            if timeout_choice == ".c":
-                print(f"{GREEN}Operation cancelled...{RESET}")
-                return None
-
-            if timeout_choice.strip() == "":
-                return 60
-
-            timeout_value = int(timeout_choice)
-            if timeout_value == 0:
-                confirm = input(f"{RED}** WARNING: Are you sure you want to disable auto-logout? (y/n): {RESET}").lower()
-                if confirm != 'y':
-                    continue
-                return 0
-            elif 10 <= timeout_value <= 3600:
-                return timeout_value
-            else:
-                print(f"{RED}** ALERT: Timeout must be between 10 and 3600 seconds, or 0 for no timeout. **{RESET}")
-        except ValueError:
-            print(f"{RED}** ALERT: Please enter a valid number. **{RESET}")
+# setup_timeout() is now imported from SHARED_RESOURCES_MOBILE
   
-def verify_setup(vault: SecureVaultEnhanced, password: str, salt: bytes, verifier: bytes) -> bool:
-    """Verify the vault setup"""
-    try:
-        derived_key = vault.derive_key_hybrid(password, salt)
-        if not derived_key:
-            return False
-            
-        decrypted = vault.decrypt_data(verifier, derived_key)
-        # FIXED: Use the same verifier string as in vaultSetup
-        return decrypted == b"BUNKER_VERIFIED"
-    except Exception as e:
-        print(f"{RED}** ALERT: Verification failed: {str(e)} **{RESET}")
-        return False
+# verify_setup() is now imported from SHARED_RESOURCES_MOBILE
 
-def vaultSetup():
-    """Setup vault with enhanced security while maintaining original process"""
-    try:
-        while True:
-            setup_choice = input(f"\n{GOLD}Enter (.g) for simplified user guide, or (y/n) if you're ready to setup bunker password: {RESET}").lower()
-            if setup_choice == 'y':
-                break
-            elif setup_choice == 'n':
-                check_terminal_size()
-                clear_screen()
-                print(title_art)
-                print(subwm)
-                print(divider)
-                print(f"{GREEN}Exiting...{RESET}")
-                return False
-            elif setup_choice == '.g':
-                # Display user guide without requiring login
-                display_setup_guide()
-                continue
-            else:
-                print(f"{RED}** ALERT: Invalid input. Please enter y, n, or .g. **{RESET}")
-                continue
-
-        while True:
-            show_password_choice = input(f"{GOLD}Do you want to show your password? (y/n) or (.c) to cancel: {RESET}").lower()
-            if show_password_choice == 'y':
-                show_password = True
-                print(f"{RED}** ALERT: Your password will be shown as you type. **{RESET}")
-                password_provided = input(f"{GOLD}Enter Password: {RESET}")
-                if password_provided == '.c':
-                    print(f"{GREEN}Operation cancelled...{RESET}")
-                    return False
-                    
-                password_confirmation = input(f"{GOLD}Confirm password: {RESET}")
-                if password_confirmation == '.c':
-                    print(f"{GREEN}Operation cancelled...{RESET}")
-                    return False
-                    
-                if password_provided != password_confirmation:
-                    print(f"{RED}** ALERT: Passwords do not match. Please try again. **{RESET}")
-                    continue
-                    
-                if len(password_provided) < 8:
-                    print(f"{RED}** ALERT: Password must be at least 8 characters long. **{RESET}")
-                    continue
-                    
-                break
-                
-            elif show_password_choice == 'n':
-                show_password = False
-                password_provided = getpass.getpass(f"{GOLD}Enter Password: {RESET}")
-                if password_provided == '.c':
-                    print(f"{GREEN}Operation cancelled...{RESET}")
-                    return False
-                    
-                password_confirmation = getpass.getpass(f"{GOLD}Confirm password: {RESET}")
-                if password_confirmation == '.c':
-                    print(f"{GREEN}Operation cancelled...{RESET}")
-                    return False
-                    
-                if password_provided != password_confirmation:
-                    print(f"{RED}** ALERT: Passwords do not match. Please try again. **{RESET}")
-                    continue
-                    
-                if len(password_provided) < 8:
-                    print(f"{RED}** ALERT: Password must be at least 8 characters long. **{RESET}")
-                    continue
-                    
-                break
-                
-            elif show_password_choice == '.c':
-                print(f"{GREEN}Operation cancelled...{RESET}")
-                return False
-            else:
-                print(f"{RED}** ALERT: Invalid input. Please enter y, n, or .c. **{RESET}")
-                continue
-
-        try:
-            # Generate salt and save it separately
-            salt = os.urandom(SALT_SIZE)
-            save_salt(salt)
-
-            # Derive key using password + salt (+ optional pepper)
-            pepper = os.environ.get("BUNKER_PEPPER", "")
-            derived_key = vault.derive_key_hybrid(password_provided, salt, password_provided)
-            # Setup timeout with cancel option
-            timeout_value = setup_timeout()
-            if timeout_value is None:
-                print(f"{GREEN}Operation cancelled...{RESET}")
-                vault.secure_delete_on_failure()
-                return False
-
-            # Create initial config structure
-            config = {
-                "salt": base64.b64encode(salt).decode(),
-                "verifier": base64.b64encode(vault.encrypt_data(b"BUNKER_VERIFIED", derived_key)).decode(),
-                #"timeout_value": timeout_value,
-                #"max_attempts": 3,
-                #"settings": {"disable_ipv4": True},
-                #"attempts": 0,
-                "last_exit": str(datetime.datetime.now().timestamp()),
-                "timestamp": str(time.time())
-            }
-            #temp tell untill we solve the encryption issue where 
-            #we need the password to get to decrypt config but cant acess it without the login
-            ui_config = {
-                "attempts": 0,
-                "max_attempts": 3,
-                "disable_ipv4": True,
-                "current_timeout": timeout_value
-            }
-            save_ui_config(ui_config)
-
-            # Encrypt and save config
-            encrypted_config = vault.encrypt_data(json.dumps(config).encode(), derived_key)
-            with open("bunker.cfg", "wb") as f:
-                f.write(encrypted_config)
-            if os.name == 'posix':
-                os.chmod("bunker.cfg", 0o600)
-
-            # Initialize empty database separately
-            empty_db = {}
-            if not saveDatabase(empty_db, derived_key):
-                raise ValueError("Failed to save initial database")
-
-            # Display success
-            clear_screen()
-            print(title_art)
-            print(subwm)
-            print(divider)
-
-            if timeout_value == 0:
-                print(f"{RED}** WARNING: Auto-logout is disabled **{RESET}")
-            else:
-                print(f"{GREEN}Auto-logout timer set to: {timeout_value} seconds{RESET}")
-
-            print(f"\n{GREEN}** SUCCESS: Vault setup complete! **{RESET}")
-            input(f"{GOLD}Press ENTER to continue: {RESET}")
-
-            time.sleep(0.5)
-            return True
-
-        except Exception as e:
-            print(f"{RED}** ALERT: Setup failed: {str(e)} **{RESET}")
-            vault.secure_delete_on_failure()
-            return False
-    except Exception as e:
-        print(f"{RED}** ALERT: Setup failed: {str(e)} **{RESET}")
-        vault.secure_delete_on_failure()
-        return False
-    finally:
-        # Secure cleanup
-        for var in ['password_provided', 'password_confirmation', 'derived_key', 'master_key']:
-            if var in locals():
-                del locals()[var]
-        vault.secure_wipe()
-             
+# vaultSetup() is now imported from SHARED_RESOURCES_MOBILE
 def main():
     """Main entry point"""
     check_terminal_size()
