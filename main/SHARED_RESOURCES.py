@@ -614,7 +614,13 @@ def clear_clipboard(token):
             # while we were reading the clipboard.
             if token != _clip_token:
                 return
-            if current == expected:
+            # Match on a trailing-newline-normalized value: some platforms and
+            # clipboard managers append \r\n on paste (notably Windows), and an
+            # exact compare would then fail to clear our OWN secret, leaving it
+            # on the clipboard. We deliberately only normalize TRAILING line
+            # endings — never leading/interior content — so we still won't wipe
+            # an unrelated value the user copied.
+            if current == expected or current.rstrip("\r\n") == expected.rstrip("\r\n"):
                 pyperclip.copy("")
                 # We just cleared our own value; forget it so a later stale
                 # timer can't act on it.

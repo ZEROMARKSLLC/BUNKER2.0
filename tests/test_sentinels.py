@@ -175,3 +175,21 @@ def test_autoclear_wipes_our_own_value(monkeypatch):
     SR.to_clipboard("SECRET-Z")
     SR.clear_clipboard(SR._clip_token)
     assert fake["value"] == ""
+
+
+def test_autoclear_clears_despite_trailing_newline_normalization(monkeypatch):
+    # Re-attack gap: some platforms/clipboard managers append \r\n on paste
+    # (Windows). An exact compare would then fail to clear our OWN secret,
+    # leaving it on the clipboard. The trailing-newline-normalized compare must
+    # still wipe it.
+    fake = {"value": ""}
+    monkeypatch.setattr(SR.pyperclip, "copy", lambda v: fake.__setitem__("value", v))
+    # paste() returns the written value with a Windows line ending appended.
+    monkeypatch.setattr(SR.pyperclip, "paste", lambda: fake["value"] + "\r\n")
+    monkeypatch.setattr(SR.threading, "Timer",
+                        lambda *a, **k: type("T", (), {"daemon": False,
+                                                       "start": lambda self: None,
+                                                       "cancel": lambda self: None})())
+    SR.to_clipboard("SECRET-W")
+    SR.clear_clipboard(SR._clip_token)
+    assert fake["value"] == ""  # cleared despite the \r\n mismatch
