@@ -1435,8 +1435,13 @@ def displayFavorites(hashed_pass, db):
                 print(f"{RED} ** ALERT: Error loading database: {str(e)} **{RESET}")
                 return False
 
-        # Filter favorite profiles
-        favorites = {k: v for k, v in db.items() if v.get("favorite", False)}
+        # Filter favorite profiles. Notes also carry a "favorite" flag, so we
+        # must exclude them here — profiles are the only entries with a
+        # "password" field — otherwise favorited notes leak into this view.
+        favorites = {
+            k: v for k, v in db.items()
+            if v.get("favorite", False) and "password" in v
+        }
         decrypted_profiles = []
         index = 1
 
@@ -3239,8 +3244,8 @@ def editNoteData(hashed_pass, db):
                         if new_private_input not in ["y", "n"]:
                             print(f"{RED}** ALERT: Invalid input. Please enter 'y', 'n', or press 'enter'. **{RESET}")
                             continue
-                            new_private = (new_private_input == "y")
-                            break
+                        new_private = (new_private_input == "y")
+                        break
 
                     # If note is marked as private, force tags to be "PRIVATE"
                     if new_private:
@@ -3837,8 +3842,10 @@ def exportNotes(hashed_pass, db):
             print(f"{RED}║ You will need it to decrypt and import notes.        ║{RESET}")
             print(f"{RED}╚══════════════════════════════════════════════════════╝{RESET}")
 
-        timeoutInput(f"\n{GOLD}Press 'enter' to continue...{RESET}")
-        return True
+        final = timeoutInput(f"\n{GOLD}Press 'enter' to continue...{RESET}")
+        # Return True ONLY on auto-logout timeout; a successful export must
+        # return to the menu, not silently log the user out.
+        return final == timeoutGlobalCode
 
     except Exception as e:
         print(f"{RED}** ALERT: Failed to export notes: {str(e)} **{RESET}")
@@ -4781,7 +4788,7 @@ def tagNotes(hashed_pass, db):
                             decrypted_title,
                             preview_text,
                             tags,
-                            info.get("content", ""),
+                            info,  # store the info dict so the SELECTED note is decrypted later
                             is_favorite,
                             is_private
                         )
@@ -4829,9 +4836,13 @@ def tagNotes(hashed_pass, db):
                         break
                     elif view_note.isdigit():
                         selected_index = int(view_note)
-                        if 1 <= selected_index <= len(decrypted_notes):
-                            selected_note = decrypted_notes[selected_index - 1]
-                            _, note_id, title, _, tags, encrypted_content, is_favorite, is_private = selected_note
+                        # Match by stored display index, not list position
+                        # (undecryptable notes leave gaps in decrypted_notes).
+                        selected_note = next(
+                            (n for n in decrypted_notes if n[0] == selected_index), None
+                        )
+                        if selected_note is not None:
+                            _, note_id, title, _, tags, note_info, is_favorite, is_private = selected_note
 
                             try:
                                 while True:
@@ -4869,8 +4880,9 @@ def tagNotes(hashed_pass, db):
                                         f"{GOLD}\nType 'v' to view full content, 'c' to copy content, or '.c' to cancel\nWhat do you want to do?: {RESET}"
                                     ).lower()
                                     if copy_choice == "v":
-                                        # Decrypt the content with enhanced security
-                                        decrypted_content = decode_and_decrypt("content", info, hashed_pass)
+                                        # Decrypt the SELECTED note's content (note_info),
+                                        # not the stale loop variable from the build pass.
+                                        decrypted_content = decode_and_decrypt("content", note_info, hashed_pass)
                                         
                                         if is_private:
                                             clear_screen()
@@ -4887,8 +4899,8 @@ def tagNotes(hashed_pass, db):
                                         break
                                     
                                     elif copy_choice == "c":
-                                        # Decrypt the content with enhanced security for copying
-                                        decrypted_content = decode_and_decrypt("content", info, hashed_pass)
+                                        # Decrypt the SELECTED note's content (note_info) for copying.
+                                        decrypted_content = decode_and_decrypt("content", note_info, hashed_pass)
                                         
                                         to_clipboard(decrypted_content)
                                         print(
@@ -5174,8 +5186,14 @@ def displayAllNotes(hashed_pass, db):
                     return True
                 elif view_note.isdigit():
                     selected_index = int(view_note)
-                    if 1 <= selected_index <= note_count:
-                        selected_note = decrypted_notes[selected_index - 1]
+                    # Match by the stored display index, not list position:
+                    # notes that failed to decrypt are shown but not added to
+                    # decrypted_notes, so positional indexing would pick the
+                    # wrong note or raise IndexError on the gaps.
+                    selected_note = next(
+                        (n for n in decrypted_notes if n[0] == selected_index), None
+                    )
+                    if selected_note is not None:
                         _, note_id, title, _, tags, info, is_favorite, is_private = selected_note
                         
                         try:

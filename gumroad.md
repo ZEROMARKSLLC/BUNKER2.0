@@ -10,15 +10,15 @@ BUNKER 2.0: Your Digital Fortress (Terminal Edition) Price: FREE! $0 OR PAY WHAT
 
 (AKA "The Only Password Manager That Doesn’t Sell Your Data to Corporate")
 
-Price: FREE! $0 OR PAY WHAT YOU WANT! (Open Source, But Low-Key Funding My Company's Dream 👀)
+Price: FREE! $0 OR PAY WHAT YOU WANT! (Source-Available, But Low-Key Funding My Company's Dream 👀)
 👉 "SHUT UP AND TAKE MY MONEY[KickStarter Coming Soon]" | 🔍 "LET ME SEE THAT DEMO FIRST [YouTube]"
 
 🔥 - WHY THIS SLAPS
 
 * Your data NEVER leaves your device (Cloud? Lame. Tracking? Cringe.)
-* Military-grade encryption (So secure, even you might forget your password)
-* Self-destruct mode → Vault auto-deletes after 3 wrong guesses or if files get tampered. Poof.
-* Attempt counter resets on login → Fresh 3 tries every session (no permanent lockouts).
+* Real AES-256-GCM encryption with Argon2id key derivation (So secure, even you might forget your password)
+* Self-destruct mode → Vault auto-deletes after 3 wrong guesses. Poof.
+* Persistent attempt counter → 3 wrong guesses TOTAL, and the counter survives restarts. This is the burner: there's no "fresh tries next session" escape hatch, by design.
 * Zero-setup vaults → First run? Boom, encrypted vault ready in 60 seconds.
 
 System info dashboard → Check your device’s security status at a glance.
@@ -50,7 +50,7 @@ Features:
 🚨 FUTURE UPDATES (YOU DECIDE! Request A Feature)
 Crypto wallet manager (Store your Bitcoin keys safely)
 Phone number manager (store phone contacts)
-Better brute-force handling (Current workaround: attempts is plaintext—fix coming!)
+Better brute-force handling (attempt counter is now device-key encrypted, not plaintext)
 Mobile and Tablet UI (Detects the device and displays the corresponding UI/UX)
 
 👾 HOW TO INSTALL (IT’S EASY, I PROMISE)
@@ -59,7 +59,7 @@ Download Python 3 (python.org)
 
 Run one command:bash
 
-pip install cryptography pyperclip psutil requests && python3 BUNKER.py
+pip install -r requirements.txt && python3 BUNKER.py
 
 
 
@@ -79,7 +79,7 @@ Socials: Twitter | TikTok
 
 🎤 FINAL WORD
 
-BUNKER 2.0 is open source, so you can tweak it yourself maybe even request for a feature… but buying it helps me build:
+BUNKER 2.0 is source-available, so you can read every line and request features… but buying it helps me build:
 
 A zero-logs VPN
 Eco-friendly web hosting
